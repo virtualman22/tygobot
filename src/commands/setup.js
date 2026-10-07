@@ -7,7 +7,7 @@ const hr = h => (h == null ? '*off*' : `${String(h).padStart(2, '0')}:00 UTC`);
 
 const CLEARABLE = [
   'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'welcome_channel', 'qotd_channel', 'qotd_hour',
-  'trivia_channel', 'trivia_hour', 'suggest_channel', 'starboard_channel', 'ticket_category',
+  'trivia_channel', 'trivia_hour', 'suggest_channel', 'starboard_channel',
 ];
 
 const text = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
@@ -21,7 +21,7 @@ const data = new SlashCommandBuilder()
     .addChannelOption(o => o.setName('announce_channel').setDescription('Default announcement channel').addChannelTypes(...text))
     .addRoleOption(o => o.setName('mod_role').setDescription('Role that can use mod commands (besides Manage Messages)'))
     .addChannelOption(o => o.setName('log_channel').setDescription('Mod log channel').addChannelTypes(...text))
-    .addChannelOption(o => o.setName('claims_channel').setDescription('Private staff channel where claim forms from normal chats are sent').addChannelTypes(...text))
+    .addChannelOption(o => o.setName('claims_channel').setDescription('Private staff channel where ALL submitted claim forms are sent').addChannelTypes(...text))
     .addChannelOption(o => o.setName('welcome_channel').setDescription('Welcome message channel').addChannelTypes(...text))
     .addStringOption(o => o.setName('welcome_message').setDescription('Use {user} {server} {count}').setMaxLength(500))
     .addChannelOption(o => o.setName('qotd_channel').setDescription('Question of the Day channel').addChannelTypes(...text))
@@ -31,7 +31,6 @@ const data = new SlashCommandBuilder()
     .addChannelOption(o => o.setName('suggest_channel').setDescription('Where suggestions are posted').addChannelTypes(...text))
     .addChannelOption(o => o.setName('starboard_channel').setDescription('Starboard channel').addChannelTypes(...text))
     .addIntegerOption(o => o.setName('starboard_threshold').setDescription('Stars needed to hit the starboard').setMinValue(1).setMaxValue(25))
-    .addChannelOption(o => o.setName('ticket_category').setDescription('Category for ticket channels').addChannelTypes(ChannelType.GuildCategory))
     .addBooleanOption(o => o.setName('xp_enabled').setDescription('Enable XP / levels'))
     .addBooleanOption(o => o.setName('automod_links').setDescription('Delete links from non-mods (needs privileged intents)')))
   .addSubcommand(s => s.setName('clear').setDescription('Unset a setting')
@@ -60,7 +59,7 @@ async function execute(interaction) {
     { name: 'Announcements', value: `Channel: ${ch(s.announce_channel)}\nMod role: ${s.mod_role ? `<@&${s.mod_role}>` : '*not set*'}\nLog: ${ch(s.log_channel)}\nClaims: ${ch(s.claims_channel)}` },
     { name: 'Welcome', value: `Channel: ${ch(s.welcome_channel)}\nMessage: ${s.welcome_message}` },
     { name: 'Daily posts', value: `QOTD: ${ch(s.qotd_channel)} at ${hr(s.qotd_hour)}\nTrivia: ${ch(s.trivia_channel)} at ${hr(s.trivia_hour)}` },
-    { name: 'Community', value: `Suggestions: ${ch(s.suggest_channel)}\nStarboard: ${ch(s.starboard_channel)} (${s.starboard_threshold}⭐)\nTickets: ${s.ticket_category ? `<#${s.ticket_category}>` : '*no category*'}` },
+    { name: 'Community', value: `Suggestions: ${ch(s.suggest_channel)}\nStarboard: ${ch(s.starboard_channel)} (${s.starboard_threshold}⭐)\nTickets: *own category per type (Giveaway Claims, Bonuses, Technical Assistance, Milestones)*` },
     { name: 'Toggles', value: `XP: ${s.xp_enabled ? 'on' : 'off'}\nLink filter: ${s.automod_links ? 'on' : 'off'}` },
   );
   return interaction.reply(eph({ embeds: [embed] }));

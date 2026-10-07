@@ -20,11 +20,10 @@ async function execute(interaction) {
   const key = interaction.options.getString('type');
   const c = CATEGORIES[key];
   const target = interaction.options.getChannel('channel') ?? interaction.channel;
-  const isTicket = String(target.topic ?? '').startsWith('ticket:');
 
   const s = getSettings(interaction.guildId);
-  if (!isTicket && !s.claims_channel && !s.log_channel) {
-    return interaction.reply(eph({ content: '⚠️ Set a private staff channel first so submitted details (crypto addresses) aren\'t shown publicly:\n`/setup set claims_channel:#your-staff-channel`' }));
+  if (!s.claims_channel) {
+    return interaction.reply(eph({ content: '⚠️ Set your claims channel first. Every submitted form is sent there (and nowhere else):\n`/setup set claims_channel:#your-claims-channel`' }));
   }
 
   try {

@@ -4,10 +4,11 @@ const {
 } = require('discord.js');
 const { db } = require('../db');
 const { eph, isMod, requireMod, truncate, ts, logToGuild } = require('../utils');
+const { payClaim } = require('./ticket');
 
 const STATUSES = ['Pending', 'Paid', 'Cancelled'];
 const EMOJI = { Pending: '⏳', Paid: '✅', Cancelled: '❌' };
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 8; // 4 button rows x 2 entries (Paid + Edit each) + 1 navigation row = Discord's 5-row limit
 
 const normStatus = s => {
   const v = String(s ?? '').trim();
@@ -71,18 +72,50 @@ function listPayload(sid, s) {
     .all(...params, PAGE_SIZE, s.page * PAGE_SIZE);
 
   const desc = rows.length
-    ? rows.map(r => `\`#${r.id}\` **${truncate(r.label, 40)}** · **${truncate(r.username, 30)}** → ${truncate(r.reward, 50)} · ${EMOJI[r.status] ?? ''} ${r.status}${r.notes ? `\n${truncate(r.notes, 260).split('\n').map(l => `> ${l}`).join('\n')}` : ''}`).join('\n')
+    ? rows.map(r => `\`#${r.id}\` **${truncate(r.label, 40)}** · **${truncate(r.username, 30)}** → ${truncate(r.reward, 50)} · ${EMOJI[r.status] ?? ''} ${r.status}${r.notes ? `\n${truncate(r.notes, 150).split('\n').map(l => `> ${l}`).join('\n')}` : ''}`).join('\n')
     : '*No entries match.*';
 
   const f = s.filters;
   const active = [f.label && `label: ${f.label}`, f.user && `user: ${f.user}`, f.status && `status: ${f.status}`].filter(Boolean).join(' · ');
   const embed = new EmbedBuilder().setColor('#9146FF').setTitle('🎁 Rewards tracker')
-    .setDescription(desc).setFooter({ text: `Page ${s.page + 1}/${pages} · ${total} entries${active ? ` · ${active}` : ''}` });
-  const row = new ActionRowBuilder().addComponents(
+    .setDescription(truncate(desc, 4000)).setFooter({ text: `Page ${s.page + 1}/${pages} · ${total} entries${active ? ` · ${active}` : ''}` });
+  // One "Paid" + "Edit" button pair per entry, two entries per row, in the same order as the list above
+  const components = [];
+  for (let i = 0; i < rows.length; i += 2) {
+    const line = new ActionRowBuilder();
+    for (const r of rows.slice(i, i + 2)) {
+      line.addComponents(
+        new ButtonBuilder().setCustomId(`rwb:paid:${sid}:${r.id}`).setLabel(`Paid #${r.id}`).setEmoji('✅')
+          .setStyle(ButtonStyle.Success).setDisabled(r.status === 'Paid'),
+        new ButtonBuilder().setCustomId(`rwb:edit:${sid}:${r.id}`).setLabel(`Edit #${r.id}`).setEmoji('✏️')
+          .setStyle(ButtonStyle.Secondary),
+      );
+    }
+    components.push(line);
+  }
+  components.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`rwp:${sid}:-1`).setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(s.page === 0),
     new ButtonBuilder().setCustomId(`rwp:${sid}:1`).setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(s.page >= pages - 1),
-  );
-  return { embeds: [embed], components: [row] };
+  ));
+  return { embeds: [embed], components };
+}
+
+/** Re-renders a saved list session (keeps its filters and page, clamps the page if entries disappeared). */
+function renderList(sid) {
+  const row = db.prepare('SELECT * FROM reward_lists WHERE sid = ?').get(sid);
+  if (!row) return null;
+  const s = { guildId: row.guild_id, page: row.page, filters: JSON.parse(row.filters) };
+  const payload = listPayload(sid, s);
+  db.prepare('UPDATE reward_lists SET page = ? WHERE sid = ?').run(s.page, sid);
+  return payload;
+}
+
+/** Marks a reward as paid. If it came from a claim form, the claim card is updated and the member is notified too. */
+async function markPaid(client, reward, userId) {
+  const claim = db.prepare('SELECT * FROM claims WHERE reward_id = ? AND paid = 0').get(reward.id);
+  if (claim) return payClaim(client, claim, userId);
+  db.prepare("UPDATE rewards SET status = 'Paid', updated_at = ? WHERE id = ?").run(Date.now(), reward.id);
+  await logToGuild(client, reward.guild_id, `🎁 <@${userId}> set reward #${reward.id} to **Paid**.`);
 }
 
 const csvCell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -151,10 +184,16 @@ async function execute(interaction) {
   if (sub === 'status') {
     const id = interaction.options.getInteger('id');
     const status = interaction.options.getString('status');
-    const res = db.prepare('UPDATE rewards SET status = ?, updated_at = ? WHERE id = ? AND guild_id = ?').run(status, Date.now(), id, g);
-    if (!res.changes) return interaction.reply(eph({ content: '❌ Entry not found.' }));
-    await logToGuild(interaction.client, g, `🎁 <@${interaction.user.id}> set reward #${id} to **${status}**.`);
-    return interaction.reply({ content: `${EMOJI[status]} Entry #${id} is now **${status}**.` });
+    const reward = getRow(id);
+    if (!reward) return interaction.reply(eph({ content: '❌ Entry not found.' }));
+    await interaction.deferReply();
+    if (status === 'Paid') {
+      await markPaid(interaction.client, reward, interaction.user.id);
+    } else {
+      db.prepare('UPDATE rewards SET status = ?, updated_at = ? WHERE id = ? AND guild_id = ?').run(status, Date.now(), id, g);
+      await logToGuild(interaction.client, g, `🎁 <@${interaction.user.id}> set reward #${id} to **${status}**.`);
+    }
+    return interaction.editReply({ content: `${EMOJI[status]} Entry #${id} is now **${status}**.` });
   }
 
   if (sub === 'delete') {
@@ -194,14 +233,34 @@ async function autocomplete(interaction) {
 }
 
 const buttons = {
+  // ◀ ▶ page buttons
   async rwp(interaction, [sid, dir]) {
     if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only mods can flip through this list.' }));
-    const row = db.prepare('SELECT * FROM reward_lists WHERE sid = ?').get(sid);
-    if (!row) return interaction.reply(eph({ content: '❌ This list is no longer available. Run `/rewards list` again.' }));
-    const s = { guildId: row.guild_id, page: row.page + Number(dir), filters: JSON.parse(row.filters) };
-    const payload = listPayload(sid, s);
-    db.prepare('UPDATE reward_lists SET page = ? WHERE sid = ?').run(s.page, sid);
+    const res = db.prepare('UPDATE reward_lists SET page = page + ? WHERE sid = ?').run(Number(dir), sid);
+    const payload = res.changes ? renderList(sid) : null;
+    if (!payload) return interaction.reply(eph({ content: '❌ This list is no longer available. Run `/rewards list` again.' }));
     return interaction.update(payload);
+  },
+
+  // ✅ Paid #id / ✏️ Edit #id buttons on every list entry
+  async rwb(interaction, [action, sid, idStr]) {
+    if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only mods can do that.' }));
+    const reward = db.prepare('SELECT * FROM rewards WHERE id = ? AND guild_id = ?').get(Number(idStr), interaction.guildId);
+    if (!reward) {
+      const payload = renderList(sid);
+      await interaction.reply(eph({ content: '❌ That entry no longer exists.' }));
+      return payload ? interaction.message.edit(payload).catch(() => {}) : undefined;
+    }
+
+    if (action === 'edit') return interaction.showModal(rewardModal(`rwedit:${reward.id}:${sid}`, reward));
+
+    if (action === 'paid') {
+      await interaction.deferUpdate();
+      if (reward.status !== 'Paid') await markPaid(interaction.client, reward, interaction.user.id);
+      const payload = renderList(sid);
+      if (payload) return interaction.editReply(payload);
+      return interaction.followUp(eph({ content: `✅ Reward #${reward.id} marked as paid. (This list expired — run \`/rewards list\` again.)` }));
+    }
   },
 };
 
@@ -219,17 +278,28 @@ const modals = {
     return interaction.reply({ content: `✅ Saved as entry #${row.id}.`, embeds: [entryEmbed(row)] });
   },
 
-  async rwedit(interaction, [id]) {
+  async rwedit(interaction, [id, sid]) {
     if (!requireMod(interaction)) return;
     const r = readRow(interaction);
     if (!r.status) return interaction.reply(eph({ content: '❌ Status must be Pending, Paid or Cancelled.' }));
+    const fromList = Boolean(sid) && typeof interaction.isFromMessage === 'function' && interaction.isFromMessage();
+    if (fromList) await interaction.deferUpdate(); else await interaction.deferReply();
+
     const res = db.prepare(`UPDATE rewards SET label = ?, username = ?, reward = ?, notes = ?, status = ?, updated_at = ?
                             WHERE id = ? AND guild_id = ?`)
       .run(r.label, r.username, r.reward, r.notes || null, r.status, Date.now(), id, interaction.guildId);
-    if (!res.changes) return interaction.reply(eph({ content: '❌ Entry not found.' }));
+    if (!res.changes) return interaction.followUp(eph({ content: '❌ Entry not found.' }));
     const row = db.prepare('SELECT * FROM rewards WHERE id = ?').get(id);
+    // Setting a claim's reward to Paid also pays the claim card and notifies the member
+    if (r.status === 'Paid') {
+      const claim = db.prepare('SELECT * FROM claims WHERE reward_id = ? AND paid = 0').get(row.id);
+      if (claim) await payClaim(interaction.client, claim, interaction.user.id);
+    }
     await logToGuild(interaction.client, interaction.guildId, `🎁 <@${interaction.user.id}> edited reward entry #${id}.`);
-    return interaction.reply({ content: '✅ Updated.', embeds: [entryEmbed(row)] });
+
+    const payload = fromList ? renderList(sid) : null;
+    if (payload) return interaction.editReply(payload);
+    return interaction.editReply({ content: '✅ Updated.', embeds: [entryEmbed(row)] });
   },
 };
 

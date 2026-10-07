@@ -11,21 +11,21 @@ const P = PermissionFlagsBits;
 // screenshot: true -> member is asked to upload a screenshot
 const CATEGORIES = {
   giveaway: {
-    label: 'Giveaway Claim', emoji: '🎁', style: ButtonStyle.Success, channel: 'giveaway', claim: true,
+    label: 'Giveaway Claim', category: 'Giveaway Claims', emoji: '🎁', style: ButtonStyle.Success, channel: 'giveaway', claim: true,
     whatName: 'What they won', whatLabel: 'What did you win?', whatPh: 'e.g. Weekly giveaway', amountPh: 'e.g. $25 or 0.001 BTC',
     help: 'Congrats on winning! Press **Submit claim details** below and fill in what you won, the amount, your crypto address and your Stake username.',
   },
   milestone: {
-    label: 'Milestones', emoji: '🏆', style: ButtonStyle.Primary, channel: 'milestone', claim: true, screenshot: true,
+    label: 'Milestones', category: 'Milestones', emoji: '🏆', style: ButtonStyle.Primary, channel: 'milestone', claim: true, screenshot: true,
     whatName: 'Milestone', whatLabel: 'Which milestone did you hit?', whatPh: 'e.g. $10,000 wagered', amountPh: 'Reward amount, e.g. $25',
     help: 'Press **Submit claim details** below and fill in the milestone you hit, the reward amount, your crypto address and your Stake username.\nThen **upload your screenshot in this chat** (or use `/screenshot`).',
   },
   tech: {
-    label: 'Technical Assistance', emoji: '🛠️', style: ButtonStyle.Secondary, channel: 'support', claim: false,
+    label: 'Technical Assistance', category: 'Technical Assistance', emoji: '🛠️', style: ButtonStyle.Secondary, channel: 'support', claim: false,
     help: 'Please describe:\n• What is going wrong\n• What you expected to happen\n• Screenshots or error messages, if any',
   },
   bonus: {
-    label: 'Bonuses', emoji: '💰', style: ButtonStyle.Primary, channel: 'bonus', claim: true,
+    label: 'Bonuses', category: 'Bonuses', emoji: '💰', style: ButtonStyle.Primary, channel: 'bonus', claim: true,
     whatName: 'Bonus', whatLabel: 'Which bonus is this for?', whatPh: 'e.g. Weekly reload bonus', amountPh: 'e.g. $25 or 0.001 BTC',
     help: 'Press **Submit claim details** below and fill in which bonus it is, the amount, your crypto address and your Stake username.',
   },
@@ -58,11 +58,33 @@ const ticketInfo = topic => {
   return tag === 'ticket' ? { userId, cat } : null;
 };
 
-/** Where claim cards from normal (non-ticket) chats go: a private staff channel. */
-const cardDestination = guildId => {
-  const s = getSettings(guildId);
-  return s.claims_channel || s.log_channel || null;
-};
+/** Every submitted claim form goes to the claims channel (/setup set claims_channel) and nowhere else. */
+const cardDestination = guildId => getSettings(guildId).claims_channel || null;
+
+// ---------- one Discord category per ticket type ----------
+
+const normName = n => String(n ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+const pendingCategories = new Map();
+
+/** Finds the server category for a ticket type (e.g. "Bonuses"), creating it (private) if it doesn't exist yet. */
+async function ticketParent(guild, c, s) {
+  const key = `${guild.id}:${c.category}`;
+  if (pendingCategories.has(key)) return pendingCategories.get(key);
+  const job = (async () => {
+    const channels = await guild.channels.fetch();
+    const want = normName(c.category);
+    const found = channels.find(ch => ch?.type === ChannelType.GuildCategory && normName(ch.name) === want);
+    if (found) return found;
+    const overwrites = [
+      { id: guild.id, deny: [P.ViewChannel] },
+      { id: guild.client.user.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageChannels] },
+    ];
+    if (s.mod_role) overwrites.push({ id: s.mod_role, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageMessages] });
+    return guild.channels.create({ name: c.category, type: ChannelType.GuildCategory, permissionOverwrites: overwrites });
+  })();
+  pendingCategories.set(key, job);
+  try { return await job; } finally { pendingCategories.delete(key); }
+}
 
 // ---------- claim form ----------
 
@@ -122,6 +144,29 @@ async function refreshCard(client, row) {
   } catch { /* card was deleted */ }
 }
 
+/** Marks a claim (and its rewards-tracker entry) as paid, updates the card and tells the member where they submitted it. */
+async function payClaim(client, claim, userId) {
+  const now = Date.now();
+  db.prepare('UPDATE claims SET paid = 1, paid_by = ?, paid_at = ? WHERE id = ?').run(userId, now, claim.id);
+  db.prepare("UPDATE rewards SET status = 'Paid', updated_at = ? WHERE id = ?").run(now, claim.reward_id);
+  const fresh = db.prepare('SELECT * FROM claims WHERE id = ?').get(claim.id);
+  await refreshCard(client, fresh);
+
+  let notified = false;
+  try {
+    const origin = await client.channels.fetch(claim.channel_id);
+    const isTicket = String(origin.topic ?? '').startsWith('ticket:');
+    await origin.send({
+      content: `✅ <@${claim.user_id}> your payment of **${claim.amount}** has been sent. Thanks!${isTicket ? ' A mod can close this ticket now.' : ''}`,
+      allowedMentions: { users: [claim.user_id] },
+    });
+    notified = true;
+  } catch { /* channel deleted or no access */ }
+
+  await logToGuild(client, claim.guild_id, `💸 <@${userId}> marked **${claim.amount}** (${claim.stake_user}) as paid. Rewards entry #${claim.reward_id}.`);
+  return { fresh, notified };
+}
+
 /** Saves a screenshot link on a claim, updates its card and the rewards tracker. */
 async function attachScreenshot(client, claim, url) {
   db.prepare('UPDATE claims SET screenshot = ? WHERE id = ?').run(url, claim.id);
@@ -155,8 +200,9 @@ const buttons = {
 
       try {
         const name = `${c.channel}-${interaction.user.username.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`.slice(0, 90);
+        const parent = await ticketParent(guild, c, s);
         const ch = await guild.channels.create({
-          name, type: ChannelType.GuildText, parent: s.ticket_category || undefined,
+          name, type: ChannelType.GuildText, parent: parent.id,
           topic: `ticket:${interaction.user.id}:${cat}`, permissionOverwrites: overwrites,
         });
         const buttonsRow = new ActionRowBuilder().addComponents(
@@ -190,7 +236,7 @@ const buttons = {
       if (info && info.userId !== interaction.user.id && !isMod(interaction)) {
         return interaction.reply(eph({ content: '❌ Only the ticket owner or staff can fill this in.' }));
       }
-      if (!info && !cardDestination(guild.id)) {
+      if (!cardDestination(guild.id)) {
         return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet. Please ask a mod to run `/setup set claims_channel`.' }));
       }
       return interaction.showModal(claimModal(key, 0));
@@ -210,27 +256,11 @@ const buttons = {
       if (!claim) return interaction.reply(eph({ content: '❌ No claim found for this card.' }));
       if (claim.paid) return interaction.reply(eph({ content: 'Already marked as paid.' }));
 
-      const now = Date.now();
-      db.prepare('UPDATE claims SET paid = 1, paid_by = ?, paid_at = ? WHERE id = ?').run(interaction.user.id, now, claim.id);
-      db.prepare("UPDATE rewards SET status = 'Paid', updated_at = ? WHERE id = ?").run(now, claim.reward_id);
-      const fresh = db.prepare('SELECT * FROM claims WHERE id = ?').get(claim.id);
-
-      await interaction.update({ embeds: [claimEmbed(fresh)], components: [claimRow(true)] });
-
-      const note = `✅ <@${claim.user_id}> your payment of **${claim.amount}** has been sent. Thanks!`;
-      if (claim.channel_id === claim.card_channel_id) {
-        await interaction.followUp({ content: `${note} A mod can close this ticket now.`, allowedMentions: { users: [claim.user_id] } });
-      } else {
-        try {
-          const origin = await interaction.client.channels.fetch(claim.channel_id);
-          await origin.send({ content: note, allowedMentions: { users: [claim.user_id] } });
-          await interaction.followUp(eph({ content: `✅ Marked as paid. I told the member in <#${claim.channel_id}>.` }));
-        } catch {
-          await interaction.followUp(eph({ content: '✅ Marked as paid, but I couldn\'t notify the member in their channel.' }));
-        }
-      }
-      await logToGuild(interaction.client, guild.id, `💸 <@${interaction.user.id}> marked **${claim.amount}** (${claim.stake_user}) as paid. Rewards entry #${claim.reward_id}.`);
-      return;
+      await interaction.deferUpdate();
+      const { notified } = await payClaim(interaction.client, claim, interaction.user.id);
+      return interaction.followUp(eph({ content: notified
+        ? `✅ Marked as paid. I told the member in <#${claim.channel_id}>.`
+        : '✅ Marked as paid, but I couldn\'t notify the member in their channel.' }));
     }
 
     if (action === 'close') {
@@ -275,7 +305,7 @@ const modals = {
       return interaction.reply(eph({ content: '❌ Only the ticket owner or staff can do that.' }));
     }
     const userId = info ? info.userId : interaction.user.id;
-    const destId = info ? interaction.channelId : cardDestination(interaction.guildId);
+    const destId = cardDestination(interaction.guildId);
     if (!destId) return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet (`/setup set claims_channel`).' }));
 
     const draft = { ...f, guild_id: interaction.guildId, channel_id: interaction.channelId, user_id: userId, category: cat, card_channel_id: destId, paid: 0, screenshot: null };
@@ -297,11 +327,9 @@ const modals = {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(interaction.guildId, interaction.channelId, userId, cat, f.what, f.amount, f.address, f.stake_user, draft.reward_id, destId, msg.id);
 
-    await logToGuild(interaction.client, interaction.guildId, `📝 New **${c.label}** claim from <@${userId}>: ${f.amount} (${f.stake_user}). Rewards entry #${draft.reward_id}.`);
-
     const shot = c.screenshot ? '\n📎 **Now upload your screenshot in this chat** (or use `/screenshot`).' : '';
-    return interaction.reply(eph({ content: `✅ Your details were submitted${info ? ' above' : ' to staff'}.${shot}` }));
+    return interaction.reply(eph({ content: `✅ Your details were submitted to staff.${shot}` }));
   },
 };
 
-module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot };
+module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim };
