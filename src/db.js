@@ -124,11 +124,30 @@ CREATE TABLE IF NOT EXISTS ticket_claims (
 );
 `);
 
+// Claims: one row per submitted claim form (tickets or any chat)
+db.exec(`
+CREATE TABLE IF NOT EXISTS claims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL, channel_id TEXT NOT NULL, user_id TEXT NOT NULL, category TEXT NOT NULL,
+  what TEXT, amount TEXT, address TEXT, stake_user TEXT, screenshot TEXT,
+  reward_id INTEGER, card_channel_id TEXT, message_id TEXT,
+  paid INTEGER DEFAULT 0, paid_by TEXT, paid_at INTEGER
+);
+`);
+// Carry over claims saved by the previous version (one-time, only if the new table is empty)
+if (!db.prepare('SELECT 1 FROM claims LIMIT 1').get()) {
+  db.exec(`INSERT INTO claims (guild_id, channel_id, user_id, category, what, amount, address, stake_user,
+                               reward_id, card_channel_id, message_id, paid, paid_by, paid_at)
+           SELECT guild_id, channel_id, user_id, category, what, amount, address, stake_user,
+                  reward_id, channel_id, message_id, paid, paid_by, paid_at FROM ticket_claims`);
+}
+try { db.exec('ALTER TABLE settings ADD COLUMN claims_channel TEXT'); } catch { /* already migrated */ }
+
 // Migration: templates keep a JSON blob so they can hold any announcement style
 try { db.exec('ALTER TABLE templates ADD COLUMN fields TEXT'); } catch { /* already migrated */ }
 
 const SETTING_COLUMNS = [
-  'announce_channel', 'mod_role', 'log_channel', 'welcome_channel', 'welcome_message',
+  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'welcome_channel', 'welcome_message',
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
   'xp_enabled', 'automod_links',

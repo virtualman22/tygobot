@@ -52,7 +52,7 @@ function loadTemplate(row) {
 
 function previewPayload(id, d) {
   const msg = composeMessage(d.fields, d.color, d.image, null);
-  const header = `**Preview** — will post in <#${d.channelId}>${d.roleId ? ` and ping <@&${d.roleId}>` : ''}`;
+  const header = `**Preview** — will post in <#${d.channelId}>${d.roleId ? ` and ping ${d.roleId === d.guildId ? '@everyone' : `<@&${d.roleId}>`}` : ''}`;
   const controls = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`ann:send:${id}`).setLabel('Send').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`ann:schedule:${id}`).setLabel('Schedule').setStyle(ButtonStyle.Primary),
@@ -268,7 +268,7 @@ const modals = {
     try {
       const ch = await interaction.client.channels.fetch(row.channel_id);
       const msg = await ch.messages.fetch(mid);
-      await msg.edit({ ...composeMessage(fields, old.color, old.image, old.roleId), allowedMentions: { parse: [] } });
+      await msg.edit({ ...composeMessage(fields, old.color, old.image, old.roleId, interaction.guildId), allowedMentions: { parse: [] } });
     } catch (e) {
       return interaction.reply(eph({ content: `❌ Couldn't edit the message: ${e.message}` }));
     }

@@ -1,0 +1,44 @@
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { getSettings } = require('../db');
+const { eph, requireMod } = require('../utils');
+const { CATEGORIES } = require('./ticket');
+
+const claimTypes = Object.entries(CATEGORIES).filter(([, c]) => c.claim);
+
+const data = new SlashCommandBuilder()
+  .setName('claimform')
+  .setDescription('Post a "Submit claim details" button in any chat')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  .addStringOption(o => o.setName('type').setDescription('What kind of claim').setRequired(true)
+    .addChoices(...claimTypes.map(([value, c]) => ({ name: c.label, value }))))
+  .addChannelOption(o => o.setName('channel').setDescription('Where to post it (default: this channel)')
+    .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread))
+  .addStringOption(o => o.setName('message').setDescription('Custom text shown above the button').setMaxLength(500));
+
+async function execute(interaction) {
+  if (!requireMod(interaction)) return;
+  const key = interaction.options.getString('type');
+  const c = CATEGORIES[key];
+  const target = interaction.options.getChannel('channel') ?? interaction.channel;
+  const isTicket = String(target.topic ?? '').startsWith('ticket:');
+
+  const s = getSettings(interaction.guildId);
+  if (!isTicket && !s.claims_channel && !s.log_channel) {
+    return interaction.reply(eph({ content: '⚠️ Set a private staff channel first so submitted details (crypto addresses) aren\'t shown publicly:\n`/setup set claims_channel:#your-staff-channel`' }));
+  }
+
+  try {
+    await target.send({
+      embeds: [new EmbedBuilder().setColor('#9146FF').setTitle(`${c.emoji} ${c.label}`)
+        .setDescription(interaction.options.getString('message')
+          ?? `Press the button below and fill in your details. ${c.screenshot ? 'You\'ll also be asked to upload a screenshot. ' : ''}Only staff can see what you submit.`)],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tk:details:${key}`).setLabel('Submit claim details').setEmoji('📝').setStyle(ButtonStyle.Primary))],
+    });
+  } catch (e) {
+    return interaction.reply(eph({ content: `❌ Couldn't post there: ${e.message}` }));
+  }
+  return interaction.reply(eph({ content: `✅ Claim form posted in ${target}.` }));
+}
+
+module.exports = { data, execute };

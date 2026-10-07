@@ -67,12 +67,15 @@ function buildPayload(rawFields, color = '#9146FF', image) {
 }
 
 /** Full message including the optional role ping, ready for send() or edit(). */
-function composeMessage(fields, color, image, roleId) {
+function composeMessage(fields, color, image, roleId, guildId) {
   const p = buildPayload(fields, color, image);
-  const content = [roleId ? `<@&${roleId}>` : '', p.content ?? ''].filter(Boolean).join('\n') || undefined;
+  // The @everyone "role" has the same ID as the server and must be written as plain @everyone
+  const everyone = Boolean(roleId) && roleId === guildId;
+  const ping = !roleId ? '' : everyone ? '@everyone' : `<@&${roleId}>`;
+  const content = [ping, p.content ?? ''].filter(Boolean).join('\n') || undefined;
   return {
     content, embeds: p.embeds, components: p.components,
-    allowedMentions: roleId ? { roles: [roleId] } : { parse: [] },
+    allowedMentions: !roleId ? { parse: [] } : everyone ? { parse: ['everyone'] } : { roles: [roleId] },
   };
 }
 
@@ -86,7 +89,7 @@ async function sendAnnouncement(client, { guildId, channelId, roleId, fields, co
   const channel = await client.channels.fetch(channelId);
   if (!channel?.isTextBased()) throw new Error('Channel not found or not text-based.');
 
-  const msg = await channel.send(composeMessage(fields, color, image, roleId));
+  const msg = await channel.send(composeMessage(fields, color, image, roleId, guildId));
   if (channel.type === ChannelType.GuildAnnouncement) {
     try { await msg.crosspost(); } catch { /* already published or no permission */ }
   }

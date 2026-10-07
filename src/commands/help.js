@@ -11,6 +11,7 @@ function checklist(guildId) {
     item(s.announce_channel, 'Announcement channel', '/setup set announce_channel:#channel'),
     item(s.log_channel, 'Mod log channel', '/setup set log_channel:#channel'),
     item(s.mod_role, 'Mod role', '/setup set mod_role:@role'),
+    item(s.claims_channel || s.log_channel, 'Claims review channel (staff only)', '/setup set claims_channel:#staff-channel'),
     item(s.ticket_category, 'Ticket category', '/setup set ticket_category:Category'),
     item(s.trivia_channel && s.trivia_hour != null, 'Daily trivia', '/setup set trivia_channel:#channel trivia_hour:18'),
     item(s.qotd_channel && s.qotd_hour != null, 'Question of the Day', '/setup set qotd_channel:#channel qotd_hour:15'),
@@ -66,20 +67,20 @@ const PAGES = {
     }),
   },
   tickets: {
-    label: '🎫 Tickets', description: 'Private support channels in 4 categories',
+    label: '🎫 Tickets & claims', description: 'Private tickets, claim forms and payouts',
     build: () => ({
-      title: '🎫 Tickets',
+      title: '🎫 Tickets & claims',
       description:
         '**Members:** press a button on the ticket panel. A private channel opens just for you and staff.\n' +
-        '🎁 **Giveaway Claim** — you won a giveaway\n' +
-        '🏆 **Milestones** — you reached a milestone\n' +
-        '🛠️ **Technical Assistance** — something is broken\n' +
-        '💰 **Bonuses** — questions about a bonus\n' +
+        '🎁 **Giveaway Claim** · 🏆 **Milestones** · 🛠️ **Technical Assistance** · 💰 **Bonuses**\n' +
         'You can have one open ticket per category.\n\n' +
-        '🎁 **Giveaway Claim** and 💰 **Bonuses** tickets have a **Submit claim details** button: you enter what you won, how much, your crypto address and your Stake username. '+
-        'Staff then press **Mark as paid** once it is sent. Every claim is saved in the rewards tracker automatically.\n\n' +
-        '**Staff 🔒:** run `/ticket panel` in the channel where members should see the buttons. Inside a ticket, **Claim** shows you are handling it and **Close ticket** deletes the channel after 5 seconds.\n\n' +
-        'Set the Discord category tickets are created in with `/setup set ticket_category`, and the staff role with `/setup set mod_role`.',
+        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Submit claim details** and fill in what you won (or which milestone you hit), how much, your crypto address and your Stake username. ' +
+        'For milestones, then upload your screenshot in the chat (or use `/screenshot`).\n\n' +
+        '**Staff 🔒**\n' +
+        '`/ticket panel` — post the ticket buttons\n' +
+        '`/claimform` — post a claim form button in ANY chat. Submissions go to your claims channel (`/setup set claims_channel`) so addresses stay private.\n' +
+        '**Mark as paid** on a claim card updates the rewards tracker and tells the member.\n' +
+        '**Only staff can close tickets.** Close ticket deletes the channel after 5 seconds.',
     }),
   },
   rewards: {
