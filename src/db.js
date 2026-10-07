@@ -2,7 +2,8 @@ const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
-const dir = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, '..', 'data');fs.mkdirSync(dir, { recursive: true });
+const dir = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, '..', 'data');
+fs.mkdirSync(dir, { recursive: true });
 
 const db = new Database(path.join(dir, 'bot.db'));
 db.pragma('journal_mode = WAL');
@@ -112,6 +113,15 @@ CREATE TABLE IF NOT EXISTS rewards (
   created_by TEXT, created_at INTEGER, updated_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_rewards_guild ON rewards (guild_id, label);
+`);
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS ticket_claims (
+  channel_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, user_id TEXT NOT NULL, category TEXT,
+  what TEXT, amount TEXT, address TEXT, stake_user TEXT,
+  reward_id INTEGER, message_id TEXT,
+  paid INTEGER DEFAULT 0, paid_by TEXT, paid_at INTEGER
+);
 `);
 
 // Migration: templates keep a JSON blob so they can hold any announcement style

@@ -76,6 +76,8 @@ const PAGES = {
         '🛠️ **Technical Assistance** — something is broken\n' +
         '💰 **Bonuses** — questions about a bonus\n' +
         'You can have one open ticket per category.\n\n' +
+        '🎁 **Giveaway Claim** and 💰 **Bonuses** tickets have a **Submit claim details** button: you enter what you won, how much, your crypto address and your Stake username. '+
+        'Staff then press **Mark as paid** once it is sent. Every claim is saved in the rewards tracker automatically.\n\n' +
         '**Staff 🔒:** run `/ticket panel` in the channel where members should see the buttons. Inside a ticket, **Claim** shows you are handling it and **Close ticket** deletes the channel after 5 seconds.\n\n' +
         'Set the Discord category tickets are created in with `/setup set ticket_category`, and the staff role with `/setup set mod_role`.',
     }),
