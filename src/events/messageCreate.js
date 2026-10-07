@@ -2,6 +2,7 @@ const { Events, PermissionsBitField } = require('discord.js');
 const { db, getSettings } = require('../db');
 const { levelFromXp } = require('../utils');
 const { SCREENSHOT_CATEGORIES, attachScreenshot } = require('../commands/ticket');
+const { handleGuess } = require('../commands/gtb');
 
 const LINK_RE = /(https?:\/\/|discord\.gg\/|discord\.com\/invite\/)/i;
 
@@ -10,6 +11,9 @@ module.exports = {
   async execute(message) {
     if (message.author.bot || !message.inGuild()) return;
     const s = getSettings(message.guildId);
+
+    // Guess the Balance: numeric messages in an open GTB channel become the member's one guess
+    await handleGuess(message).catch(e => console.error('GTB guess failed:', e.message));
 
     // Milestone claims: the first image the claimant posts in the chat becomes their screenshot
     // (needs the Message Content intent; otherwise members can use /screenshot instead)
@@ -29,8 +33,8 @@ module.exports = {
         && !message.member?.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
       try {
         await message.delete();
-        const warn = await message.channel.send({ content: `<@${message.author.id}> links aren't allowed here.`, allowedMentions: { users: [message.author.id] } });
-        setTimeout(() => warn.delete().catch(() => {}), 6000);
+        // The bot's warning stays in the channel (it no longer deletes itself after a few seconds)
+        await message.channel.send({ content: `<@${message.author.id}> links aren't allowed here.`, allowedMentions: { users: [message.author.id] } });
       } catch { /* missing permissions */ }
       return;
     }

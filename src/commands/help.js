@@ -88,14 +88,26 @@ const PAGES = {
     build: () => ({
       title: '🎁 Rewards tracker 🔒',
       description:
-        'A private log for prizes, payouts and bonuses. Each entry has: **Label** (what it is for), **User name**, **Reward**, **Notes** and **Status** (Pending / Paid / Cancelled).\n\n' +
+        'A log for prizes, payouts and bonuses. Each entry has: **Label** (what it is for), **User name**, **Reward**, **Notes** and **Status** (Pending / Paid / Cancelled).\n\n' +
         '`/rewards add` — fill in a short form\n' +
         '`/rewards list` — browse, with optional filters for label, user or status\n' +
         '`/rewards status` — mark an entry Paid in one step\n' +
         '`/rewards view`, `edit`, `delete` — work with one entry by its number\n' +
         '`/rewards labels` — totals per label (how many are still pending)\n' +
         '`/rewards export` — download a CSV for Excel or Google Sheets\n\n' +
-        'Only you can see the replies.',
+        'Replies are posted in the channel for everyone to see, with full usernames and crypto addresses.',
+    }),
+  },
+  gtb: {
+    label: '💰 Guess The Balance', description: 'Run a GTB game', mod: true,
+    build: () => ({
+      title: '💰 Guess The Balance 🔒',
+      description:
+        '`/gtb start` — opens the channel; members send a number (like `1250` or `1250.50`) as their guess. **One guess each**, the first one counts (✅ = saved, ❌ = already guessed).\n' +
+        '`/gtb close` — stops entries and locks the channel\n' +
+        '`/gtb result balance:` — enter the final balance: posts the **top 3 with how far off they were**, then clears every entry\n' +
+        '`/gtb status` — how many guesses are in · `/gtb cancel` — scrap the game\n\n' +
+        'Needs the **Message Content** intent (`ENABLE_PRIVILEGED_INTENTS=true`) and the bot needs **Manage Channels** in the GTB channel.',
     }),
   },
   trivia: {

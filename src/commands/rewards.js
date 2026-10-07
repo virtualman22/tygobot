@@ -3,12 +3,11 @@ const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder,
 } = require('discord.js');
 const { db } = require('../db');
-const { eph, requireMod, truncate, ts, logToGuild } = require('../utils');
+const { eph, isMod, requireMod, truncate, ts, logToGuild } = require('../utils');
 
 const STATUSES = ['Pending', 'Paid', 'Cancelled'];
 const EMOJI = { Pending: '⏳', Paid: '✅', Cancelled: '❌' };
-const PAGE_SIZE = 8;
-const sessions = new Map();
+const PAGE_SIZE = 6;
 
 const normStatus = s => {
   const v = String(s ?? '').trim();
@@ -72,7 +71,7 @@ function listPayload(sid, s) {
     .all(...params, PAGE_SIZE, s.page * PAGE_SIZE);
 
   const desc = rows.length
-    ? rows.map(r => `\`#${r.id}\` **${truncate(r.label, 40)}** · **${truncate(r.username, 30)}** → ${truncate(r.reward, 50)} · ${EMOJI[r.status] ?? ''} ${r.status}${r.notes ? `\n> ${truncate(r.notes.replace(/\n/g, ' '), 90)}` : ''}`).join('\n')
+    ? rows.map(r => `\`#${r.id}\` **${truncate(r.label, 40)}** · **${truncate(r.username, 30)}** → ${truncate(r.reward, 50)} · ${EMOJI[r.status] ?? ''} ${r.status}${r.notes ? `\n${truncate(r.notes, 260).split('\n').map(l => `> ${l}`).join('\n')}` : ''}`).join('\n')
     : '*No entries match.*';
 
   const f = s.filters;
@@ -133,15 +132,14 @@ async function execute(interaction) {
         status: interaction.options.getString('status'),
       },
     };
-    sessions.set(sid, s);
-    setTimeout(() => sessions.delete(sid), 15 * 60_000).unref();
-    return interaction.reply(eph(listPayload(sid, s)));
+    db.prepare('INSERT INTO reward_lists (sid, guild_id, filters, page) VALUES (?, ?, ?, 0)').run(sid, g, JSON.stringify(s.filters));
+    return interaction.reply(listPayload(sid, s)); // public: everyone in the channel can see it
   }
 
   if (sub === 'view') {
     const r = getRow(interaction.options.getInteger('id'));
     if (!r) return interaction.reply(eph({ content: '❌ Entry not found.' }));
-    return interaction.reply(eph({ embeds: [entryEmbed(r)] }));
+    return interaction.reply({ embeds: [entryEmbed(r)] });
   }
 
   if (sub === 'edit') {
@@ -156,7 +154,7 @@ async function execute(interaction) {
     const res = db.prepare('UPDATE rewards SET status = ?, updated_at = ? WHERE id = ? AND guild_id = ?').run(status, Date.now(), id, g);
     if (!res.changes) return interaction.reply(eph({ content: '❌ Entry not found.' }));
     await logToGuild(interaction.client, g, `🎁 <@${interaction.user.id}> set reward #${id} to **${status}**.`);
-    return interaction.reply(eph({ content: `${EMOJI[status]} Entry #${id} is now **${status}**.` }));
+    return interaction.reply({ content: `${EMOJI[status]} Entry #${id} is now **${status}**.` });
   }
 
   if (sub === 'delete') {
@@ -172,7 +170,7 @@ async function execute(interaction) {
         FROM rewards WHERE guild_id = ? GROUP BY label COLLATE NOCASE ORDER BY MAX(id) DESC LIMIT 25`).all(g);
     if (!rows.length) return interaction.reply(eph({ content: 'No entries yet. Use `/rewards add`.' }));
     const lines = rows.map(r => `**${truncate(r.label, 60)}** — ${r.total} total · ⏳ ${r.pending} · ✅ ${r.paid} · ❌ ${r.cancelled}`);
-    return interaction.reply(eph({ embeds: [new EmbedBuilder().setColor('#9146FF').setTitle('🏷️ Labels').setDescription(lines.join('\n'))] }));
+    return interaction.reply({ embeds: [new EmbedBuilder().setColor('#9146FF').setTitle('🏷️ Labels').setDescription(lines.join('\n'))] });
   }
 
   if (sub === 'export') {
@@ -184,7 +182,7 @@ async function execute(interaction) {
     const lines = rows.map(r => [r.id, r.label, r.username, r.reward, r.status, r.notes,
       new Date(r.created_at).toISOString(), new Date(r.updated_at).toISOString()].map(csvCell).join(','));
     const file = new AttachmentBuilder(Buffer.from('\uFEFF' + [header.join(','), ...lines].join('\n')), { name: 'rewards.csv' });
-    return interaction.reply(eph({ content: `📄 ${rows.length} entries exported.`, files: [file] }));
+    return interaction.reply({ content: `📄 ${rows.length} entries exported.`, files: [file] });
   }
 }
 
@@ -197,10 +195,13 @@ async function autocomplete(interaction) {
 
 const buttons = {
   async rwp(interaction, [sid, dir]) {
-    const s = sessions.get(sid);
-    if (!s || s.userId !== interaction.user.id) return interaction.reply(eph({ content: '⌛ This list expired. Run `/rewards list` again.' }));
-    s.page += Number(dir);
-    return interaction.update(listPayload(sid, s));
+    if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only mods can flip through this list.' }));
+    const row = db.prepare('SELECT * FROM reward_lists WHERE sid = ?').get(sid);
+    if (!row) return interaction.reply(eph({ content: '❌ This list is no longer available. Run `/rewards list` again.' }));
+    const s = { guildId: row.guild_id, page: row.page + Number(dir), filters: JSON.parse(row.filters) };
+    const payload = listPayload(sid, s);
+    db.prepare('UPDATE reward_lists SET page = ? WHERE sid = ?').run(s.page, sid);
+    return interaction.update(payload);
   },
 };
 
@@ -215,7 +216,7 @@ const modals = {
       .run(interaction.guildId, r.label, r.username, r.reward, r.notes || null, r.status, interaction.user.id, now, now);
     const row = db.prepare('SELECT * FROM rewards WHERE id = ?').get(res.lastInsertRowid);
     await logToGuild(interaction.client, interaction.guildId, `🎁 <@${interaction.user.id}> added reward #${row.id}: **${r.username}** — ${r.reward} (${r.label}).`);
-    return interaction.reply(eph({ content: `✅ Saved as entry #${row.id}.`, embeds: [entryEmbed(row)] }));
+    return interaction.reply({ content: `✅ Saved as entry #${row.id}.`, embeds: [entryEmbed(row)] });
   },
 
   async rwedit(interaction, [id]) {
@@ -228,7 +229,7 @@ const modals = {
     if (!res.changes) return interaction.reply(eph({ content: '❌ Entry not found.' }));
     const row = db.prepare('SELECT * FROM rewards WHERE id = ?').get(id);
     await logToGuild(interaction.client, interaction.guildId, `🎁 <@${interaction.user.id}> edited reward entry #${id}.`);
-    return interaction.reply(eph({ content: '✅ Updated.', embeds: [entryEmbed(row)] }));
+    return interaction.reply({ content: '✅ Updated.', embeds: [entryEmbed(row)] });
   },
 };
 

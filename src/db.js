@@ -115,6 +115,22 @@ CREATE TABLE IF NOT EXISTS rewards (
 CREATE INDEX IF NOT EXISTS idx_rewards_guild ON rewards (guild_id, label);
 `);
 
+// Rewards list sessions (kept in the database so the page buttons keep working indefinitely)
+db.exec(`
+CREATE TABLE IF NOT EXISTS reward_lists (
+  sid TEXT PRIMARY KEY, guild_id TEXT NOT NULL, filters TEXT NOT NULL, page INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS gtb_games (
+  channel_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+  title TEXT, started_by TEXT, started_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS gtb_entries (
+  channel_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  guess REAL NOT NULL, guess_text TEXT NOT NULL, message_id TEXT, ts INTEGER NOT NULL,
+  PRIMARY KEY (channel_id, user_id)
+);
+`);
+
 db.exec(`
 CREATE TABLE IF NOT EXISTS ticket_claims (
   channel_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, user_id TEXT NOT NULL, category TEXT,
