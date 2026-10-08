@@ -19,7 +19,7 @@ module.exports = {
     // (needs the Message Content intent; otherwise members can use /screenshot instead)
     if (message.attachments.some(a => a.contentType?.startsWith('image/'))) {
       const marks = SCREENSHOT_CATEGORIES.map(() => '?').join(',');
-      const claim = db.prepare(`SELECT * FROM claims WHERE channel_id = ? AND user_id = ? AND paid = 0 AND screenshot IS NULL
+      const claim = db.prepare(`SELECT * FROM claims WHERE channel_id = ? AND user_id = ? AND paid = 0 AND disqualified = 0 AND screenshot IS NULL
                                 AND category IN (${marks}) ORDER BY id DESC LIMIT 1`)
         .get(message.channelId, message.author.id, ...SCREENSHOT_CATEGORIES);
       if (claim) {

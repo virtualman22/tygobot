@@ -31,5 +31,6 @@ module.exports = {
     console.log('================================\n');
     await registerCommands(client);
     require('../scheduler').start(client);
+    require('../commands/ticket').refreshOpenCards(client).catch(e => console.error('Claim card refresh failed:', e.message));
   },
 };

@@ -3,7 +3,7 @@ const {
   ModalBuilder, TextInputBuilder, TextInputStyle,
 } = require('discord.js');
 const { db, getSettings } = require('../db');
-const { eph, isMod, logToGuild, truncate, ts } = require('../utils');
+const { eph, isMod, requireMod, logToGuild, truncate, ts } = require('../utils');
 
 const P = PermissionFlagsBits;
 
@@ -107,6 +107,7 @@ function claimModal(cat, claimId, v = {}) {
 function claimEmbed(row) {
   const c = CATEGORIES[row.category];
   const paid = Boolean(row.paid);
+  const dq = Boolean(row.disqualified);
   const fields = [
     { name: c.whatName, value: truncate(row.what, 1024) },
     { name: 'How much', value: truncate(row.amount, 1024), inline: true },
@@ -121,16 +122,24 @@ function claimEmbed(row) {
       value: row.screenshot ? `📎 [View screenshot](${row.screenshot})` : `⏳ Not uploaded yet — the member can post it in <#${row.channel_id}> or use \`/screenshot\``,
     });
   }
-  fields.push({ name: 'Status', value: paid ? `✅ **Paid** by <@${row.paid_by}> ${ts(row.paid_at, 'R')}` : '⏳ Waiting for payment' });
-  return new EmbedBuilder().setColor(paid ? '#2ECC71' : '#F1C40F')
+  fields.push({
+    name: 'Status',
+    value: dq
+      ? `🚫 **Disqualified** by <@${row.dq_by}> ${ts(row.dq_at, 'R')}${row.dq_reason ? `\nReason: ${truncate(row.dq_reason, 500)}` : ''}`
+      : paid ? `✅ **Paid** by <@${row.paid_by}> ${ts(row.paid_at, 'R')}` : '⏳ Waiting for payment',
+  });
+  return new EmbedBuilder().setColor(dq ? '#E74C3C' : paid ? '#2ECC71' : '#F1C40F')
     .setTitle(`${c.emoji} ${c.label} — claim details`).addFields(fields)
     .setFooter({ text: `Rewards tracker entry #${row.reward_id}` });
 }
 
-const claimRow = paid => new ActionRowBuilder().addComponents(
+/** Card buttons: Mark as paid · Edit details · Disqualify. All lock once the claim is paid or disqualified. */
+const claimRow = (paid, dq = false) => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('tk:paid').setLabel(paid ? 'Paid' : 'Mark as paid').setEmoji('✅')
-    .setStyle(ButtonStyle.Success).setDisabled(paid),
-  new ButtonBuilder().setCustomId('tk:edit').setLabel('Edit details').setStyle(ButtonStyle.Secondary).setDisabled(paid),
+    .setStyle(ButtonStyle.Success).setDisabled(paid || dq),
+  new ButtonBuilder().setCustomId('tk:edit').setLabel('Edit details').setStyle(ButtonStyle.Secondary).setDisabled(paid || dq),
+  new ButtonBuilder().setCustomId('tk:dq').setLabel(dq ? 'Disqualified' : 'Disqualify').setEmoji('🚫')
+    .setStyle(ButtonStyle.Danger).setDisabled(paid || dq),
 );
 
 const claimNotes = (r) =>
@@ -140,7 +149,7 @@ async function refreshCard(client, row) {
   try {
     const ch = await client.channels.fetch(row.card_channel_id);
     const msg = await ch.messages.fetch(row.message_id);
-    await msg.edit({ embeds: [claimEmbed(row)], components: [claimRow(Boolean(row.paid))] });
+    await msg.edit({ embeds: [claimEmbed(row)], components: [claimRow(Boolean(row.paid), Boolean(row.disqualified))] });
   } catch { /* card was deleted */ }
 }
 
@@ -153,8 +162,9 @@ async function payClaim(client, claim, userId) {
   await refreshCard(client, fresh);
 
   let notified = false;
+  let origin = null;
   try {
-    const origin = await client.channels.fetch(claim.channel_id);
+    origin = await client.channels.fetch(claim.channel_id);
     const isTicket = String(origin.topic ?? '').startsWith('ticket:');
     await origin.send({
       content: `✅ <@${claim.user_id}> your payment of **${claim.amount}** has been sent. Thanks!${isTicket ? ' A mod can close this ticket now.' : ''}`,
@@ -163,8 +173,23 @@ async function payClaim(client, claim, userId) {
     notified = true;
   } catch { /* channel deleted or no access */ }
 
+  // Paid tickets are renamed to paid-<name> so staff can spot them (Discord limits renames to 2 per 10 min, so don't wait on it)
+  if (origin && String(origin.topic ?? '').startsWith('ticket:') && !/^paid-/.test(origin.name)) {
+    const rest = origin.name.replace(/^[a-z]+-/, '');
+    origin.setName(`paid-${rest}`.slice(0, 100)).catch(() => {});
+  }
+
   await logToGuild(client, claim.guild_id, `💸 <@${userId}> marked **${claim.amount}** (${claim.stake_user}) as paid. Rewards entry #${claim.reward_id}.`);
   return { fresh, notified };
+}
+
+/** On startup, re-draw cards still waiting for payment so older ones also get the Disqualify button. */
+async function refreshOpenCards(client) {
+  const rows = db.prepare('SELECT * FROM claims WHERE paid = 0 AND disqualified = 0 AND message_id IS NOT NULL ORDER BY id DESC LIMIT 100').all();
+  for (const row of rows) {
+    await refreshCard(client, row);
+    await new Promise(r => setTimeout(r, 1000));
+  }
 }
 
 /** Saves a screenshot link on a claim, updates its card and the rewards tracker. */
@@ -246,6 +271,7 @@ const buttons = {
       const claim = byCard();
       if (!claim) return interaction.reply(eph({ content: '❌ Claim not found.' }));
       if (claim.paid) return interaction.reply(eph({ content: '✅ This claim has already been paid.' }));
+      if (claim.disqualified) return interaction.reply(eph({ content: '🚫 This claim was disqualified.' }));
       if (claim.user_id !== interaction.user.id && !isMod(interaction)) return interaction.reply(eph({ content: '❌ Only the member or staff can edit this.' }));
       return interaction.showModal(claimModal(claim.category, claim.id, claim));
     }
@@ -255,12 +281,25 @@ const buttons = {
       const claim = byCard();
       if (!claim) return interaction.reply(eph({ content: '❌ No claim found for this card.' }));
       if (claim.paid) return interaction.reply(eph({ content: 'Already marked as paid.' }));
+      if (claim.disqualified) return interaction.reply(eph({ content: '🚫 This claim was disqualified.' }));
 
       await interaction.deferUpdate();
       const { notified } = await payClaim(interaction.client, claim, interaction.user.id);
       return interaction.followUp(eph({ content: notified
         ? `✅ Marked as paid. I told the member in <#${claim.channel_id}>.`
         : '✅ Marked as paid, but I couldn\'t notify the member in their channel.' }));
+    }
+
+    if (action === 'dq') {
+      if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only staff can disqualify a claim.' }));
+      const claim = byCard();
+      if (!claim) return interaction.reply(eph({ content: '❌ No claim found for this card.' }));
+      if (claim.paid) return interaction.reply(eph({ content: '✅ This claim is already paid, so it can\'t be disqualified.' }));
+      if (claim.disqualified) return interaction.reply(eph({ content: '🚫 Already disqualified.' }));
+      return interaction.showModal(new ModalBuilder().setCustomId(`tkdq:${claim.id}`).setTitle('Disqualify this claim').addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason (sent to the member)')
+          .setStyle(TextInputStyle.Paragraph).setMaxLength(500).setRequired(false)
+          .setPlaceholder('Optional, e.g. Duplicate claim / wrong screenshot'))));
     }
 
     if (action === 'close') {
@@ -291,6 +330,7 @@ const modals = {
       const row = db.prepare('SELECT * FROM claims WHERE id = ? AND guild_id = ?').get(claimId, interaction.guildId);
       if (!row) return interaction.reply(eph({ content: '❌ Claim not found.' }));
       if (row.paid) return interaction.reply(eph({ content: '✅ This claim has already been paid.' }));
+      if (row.disqualified) return interaction.reply(eph({ content: '🚫 This claim was disqualified.' }));
       if (row.user_id !== interaction.user.id && !isMod(interaction)) return interaction.reply(eph({ content: '❌ Not allowed.' }));
       db.prepare('UPDATE claims SET what = ?, amount = ?, address = ?, stake_user = ? WHERE id = ?').run(f.what, f.amount, f.address, f.stake_user, row.id);
       const fresh = db.prepare('SELECT * FROM claims WHERE id = ?').get(row.id);
@@ -308,28 +348,68 @@ const modals = {
     const destId = cardDestination(interaction.guildId);
     if (!destId) return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet (`/setup set claims_channel`).' }));
 
+    // One active submission per member per category: a new one is allowed once the old one is paid or disqualified
+    const active = db.prepare('SELECT id FROM claims WHERE guild_id = ? AND user_id = ? AND category = ? AND paid = 0 AND disqualified = 0 LIMIT 1')
+      .get(interaction.guildId, userId, cat);
+    if (active) {
+      return interaction.reply(eph({ content: `❌ ${userId === interaction.user.id ? 'You already have' : 'This member already has'} an active **${c.label}** submission that hasn't been paid yet. `
+        + 'Staff are handling it — a new one can be submitted once it is paid or removed. To change the details, ask staff to edit it.' }));
+    }
+
     const draft = { ...f, guild_id: interaction.guildId, channel_id: interaction.channelId, user_id: userId, category: cat, card_channel_id: destId, paid: 0, screenshot: null };
     const res = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at)
                             VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?)`)
       .run(interaction.guildId, c.label, f.stake_user, truncate(`${f.what} (${f.amount})`, 200), claimNotes(draft), userId, now, now);
     draft.reward_id = Number(res.lastInsertRowid);
+    // Saved before the card is posted, so two quick submissions can't both slip past the check above
+    const claimRes = db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, what, amount, address, stake_user, reward_id, card_channel_id)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(interaction.guildId, interaction.channelId, userId, cat, f.what, f.amount, f.address, f.stake_user, draft.reward_id, destId);
+    const newClaimId = Number(claimRes.lastInsertRowid);
 
-    let msg;
+    await interaction.deferReply(eph());
     try {
       const dest = await interaction.client.channels.fetch(destId);
-      msg = await dest.send({ embeds: [claimEmbed(draft)], components: [claimRow(false)] });
+      const msg = await dest.send({ embeds: [claimEmbed(draft)], components: [claimRow(false)] });
+      db.prepare('UPDATE claims SET message_id = ? WHERE id = ?').run(msg.id, newClaimId);
     } catch (e) {
+      db.prepare('DELETE FROM claims WHERE id = ?').run(newClaimId);
       db.prepare('DELETE FROM rewards WHERE id = ?').run(draft.reward_id);
-      return interaction.reply(eph({ content: `❌ I couldn't post your claim to the staff channel (${e.message}). Please tell a mod.` }));
+      return interaction.editReply({ content: `❌ I couldn't post your claim to the staff channel (${e.message}). Please tell a mod.` });
     }
 
-    db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, what, amount, address, stake_user, reward_id, card_channel_id, message_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(interaction.guildId, interaction.channelId, userId, cat, f.what, f.amount, f.address, f.stake_user, draft.reward_id, destId, msg.id);
-
     const shot = c.screenshot ? '\n📎 **Now upload your screenshot in this chat** (or use `/screenshot`).' : '';
-    return interaction.reply(eph({ content: `✅ Your details were submitted to staff.${shot}` }));
+    return interaction.editReply({ content: `✅ Your details were submitted to staff.${shot}` });
+  },
+
+  // Staff pressed Disqualify on a claim card and filled in the (optional) reason
+  async tkdq(interaction, [claimIdStr]) {
+    if (!requireMod(interaction)) return;
+    const row = db.prepare('SELECT * FROM claims WHERE id = ? AND guild_id = ?').get(Number(claimIdStr), interaction.guildId);
+    if (!row) return interaction.reply(eph({ content: '❌ Claim not found.' }));
+    if (row.paid) return interaction.reply(eph({ content: '✅ This claim is already paid, so it can\'t be disqualified.' }));
+    if (row.disqualified) return interaction.reply(eph({ content: '🚫 Already disqualified.' }));
+    await interaction.deferReply(eph());
+
+    const reason = interaction.fields.getTextInputValue('reason').trim();
+    const now = Date.now();
+    db.prepare('UPDATE claims SET disqualified = 1, dq_by = ?, dq_reason = ?, dq_at = ? WHERE id = ?').run(interaction.user.id, reason || null, now, row.id);
+    db.prepare("UPDATE rewards SET status = 'Cancelled', updated_at = ? WHERE id = ?").run(now, row.reward_id);
+    await refreshCard(interaction.client, db.prepare('SELECT * FROM claims WHERE id = ?').get(row.id));
+
+    let notified = false;
+    try {
+      const origin = await interaction.client.channels.fetch(row.channel_id);
+      await origin.send({
+        content: `🚫 <@${row.user_id}> your **${CATEGORIES[row.category].label}** claim (**${row.amount}**) was disqualified by staff.${reason ? `\n**Reason:** ${reason}` : ''}`,
+        allowedMentions: { users: [row.user_id] },
+      });
+      notified = true;
+    } catch { /* channel deleted or no access */ }
+
+    await logToGuild(interaction.client, interaction.guildId, `🚫 <@${interaction.user.id}> disqualified ${row.stake_user}'s **${row.amount}** claim${reason ? ` (${reason})` : ''}. Rewards entry #${row.reward_id} set to Cancelled.`);
+    return interaction.editReply({ content: `🚫 Claim disqualified and the rewards entry is now Cancelled. ${notified ? 'The member was told in their chat.' : 'I couldn\'t reach the member\'s chat.'} They can submit a new claim for this category.` });
   },
 };
 
-module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim };
+module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, refreshOpenCards };

@@ -159,6 +159,28 @@ if (!db.prepare('SELECT 1 FROM claims LIMIT 1').get()) {
 }
 try { db.exec('ALTER TABLE settings ADD COLUMN claims_channel TEXT'); } catch { /* already migrated */ }
 
+// Claims can be disqualified by staff (frees the member's slot for that category)
+for (const col of ['disqualified INTEGER DEFAULT 0', 'dq_by TEXT', 'dq_reason TEXT', 'dq_at INTEGER']) {
+  try { db.exec(`ALTER TABLE claims ADD COLUMN ${col}`); } catch { /* already migrated */ }
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_claims_active ON claims (guild_id, user_id, category, paid, disqualified)');
+
+// Custom lists (/list): a public embed with names + up to two value columns, edited by staff
+db.exec(`
+CREATE TABLE IF NOT EXISTS lists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL, channel_id TEXT NOT NULL, message_id TEXT,
+  title TEXT NOT NULL, description TEXT,
+  col1 TEXT NOT NULL DEFAULT 'Name', col2 TEXT, col3 TEXT,
+  page INTEGER DEFAULT 0, created_by TEXT, created_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS list_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  list_id INTEGER NOT NULL, name TEXT NOT NULL, value1 TEXT, value2 TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_list_entries ON list_entries (list_id);
+`);
+
 // Migration: templates keep a JSON blob so they can hold any announcement style
 try { db.exec('ALTER TABLE templates ADD COLUMN fields TEXT'); } catch { /* already migrated */ }
 

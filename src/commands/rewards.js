@@ -112,7 +112,7 @@ function renderList(sid) {
 
 /** Marks a reward as paid. If it came from a claim form, the claim card is updated and the member is notified too. */
 async function markPaid(client, reward, userId) {
-  const claim = db.prepare('SELECT * FROM claims WHERE reward_id = ? AND paid = 0').get(reward.id);
+  const claim = db.prepare('SELECT * FROM claims WHERE reward_id = ? AND paid = 0 AND disqualified = 0').get(reward.id);
   if (claim) return payClaim(client, claim, userId);
   db.prepare("UPDATE rewards SET status = 'Paid', updated_at = ? WHERE id = ?").run(Date.now(), reward.id);
   await logToGuild(client, reward.guild_id, `🎁 <@${userId}> set reward #${reward.id} to **Paid**.`);
@@ -292,7 +292,7 @@ const modals = {
     const row = db.prepare('SELECT * FROM rewards WHERE id = ?').get(id);
     // Setting a claim's reward to Paid also pays the claim card and notifies the member
     if (r.status === 'Paid') {
-      const claim = db.prepare('SELECT * FROM claims WHERE reward_id = ? AND paid = 0').get(row.id);
+      const claim = db.prepare('SELECT * FROM claims WHERE reward_id = ? AND paid = 0 AND disqualified = 0').get(row.id);
       if (claim) await payClaim(interaction.client, claim, interaction.user.id);
     }
     await logToGuild(interaction.client, interaction.guildId, `🎁 <@${interaction.user.id}> edited reward entry #${id}.`);

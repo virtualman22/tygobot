@@ -13,7 +13,7 @@ async function execute(interaction) {
   if (!image.contentType?.startsWith('image/')) return interaction.reply(eph({ content: '❌ That file isn\'t an image.' }));
 
   const marks = SCREENSHOT_CATEGORIES.map(() => '?').join(',');
-  const claim = db.prepare(`SELECT * FROM claims WHERE channel_id = ? AND user_id = ? AND paid = 0 AND category IN (${marks}) ORDER BY id DESC LIMIT 1`)
+  const claim = db.prepare(`SELECT * FROM claims WHERE channel_id = ? AND user_id = ? AND paid = 0 AND disqualified = 0 AND category IN (${marks}) ORDER BY id DESC LIMIT 1`)
     .get(interaction.channelId, interaction.user.id, ...SCREENSHOT_CATEGORIES);
   if (!claim) return interaction.reply(eph({ content: '❌ You have no unpaid milestone claim in this chat. Submit your claim details first.' }));
 

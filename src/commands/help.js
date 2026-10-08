@@ -78,7 +78,9 @@ const PAGES = {
         '**Staff 🔒**\n' +
         '`/ticket panel` — post the ticket buttons\n' +
         '`/claimform` — post a claim form button in ANY chat. Submissions go to your claims channel (`/setup set claims_channel`) so addresses stay private.\n' +
-        '**Mark as paid** on a claim card updates the rewards tracker and tells the member.\n' +
+        '**Mark as paid** on a claim card updates the rewards tracker, tells the member and renames their ticket to `paid-…`.\n' +
+        '**Disqualify** on a claim card (with an optional reason) cancels it, tells the member and lets them submit again. Paid claims can\'t be disqualified.\n' +
+        'Each member can have **one active submission per category** until it is paid or disqualified.\n' +
         '**Only staff can close tickets.** Close ticket deletes the channel after 5 seconds.',
     }),
   },
@@ -95,6 +97,21 @@ const PAGES = {
         '`/rewards labels` — totals per label (how many are still pending)\n' +
         '`/rewards export` — download a CSV for Excel or Google Sheets\n\n' +
         'Replies are posted in the channel for everyone to see, with full usernames and crypto addresses.',
+    }),
+  },
+  lists: {
+    label: '📋 Custom lists', description: 'Make lists of names and values that everyone can read', mod: true,
+    build: () => ({
+      title: '📋 Custom lists 🔒',
+      description:
+        'Spawn as many lists as you like, each for its own purpose (top wagerers, winners, VIPs…). Everyone can read them; staff edit them with buttons.\n\n' +
+        '`/list create title:` — posts a new empty list. Optional `value1` / `value2` set the headers of up to two value columns (e.g. *Amount*, *Status*), `name_header` renames the names column, and `channel` picks where it goes.\n' +
+        '`/list all` — every list in the server with a link · `/list delete` — remove one\n\n' +
+        '**Buttons on the list**\n' +
+        '➕ **Add** — one entry · 📥 **Bulk add** — paste many, one per line like `Alice | $25 | Paid`\n' +
+        '✏️ **Edit** — pick an entry and change it · 🗑️ **Remove** — pick one or more entries to delete\n' +
+        '⚙️ **Settings** — change the title, text and column headers (leave a value header empty to hide that column)\n' +
+        '◀ ▶ — pages, for long lists (anyone can use these)',
     }),
   },
   gtb: {
