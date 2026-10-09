@@ -73,7 +73,7 @@ const PAGES = {
         '**Members:** press a button on the ticket panel. A private channel opens just for you and staff.\n' +
         '🎁 **Giveaway Claim** · 🏆 **Milestones** · 🛠️ **Technical Assistance** · 💰 **Bonuses**\n' +
         'You can have one open ticket per category.\n\n' +
-        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Submit claim details** and fill in what you won (or which milestone you hit), how much, your crypto address and your Stake username. ' +
+        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Submit claim details** and fill in what you won (or which milestone you hit), how much, your USDT ETH address and your Stake username. ' +
         'For milestones, then upload your screenshot in the chat (or use `/screenshot`).\n\n' +
         '**Staff 🔒**\n' +
         '`/ticket panel` — post the ticket buttons\n' +
@@ -96,7 +96,7 @@ const PAGES = {
         '`/rewards view`, `edit`, `delete` — work with one entry by its number\n' +
         '`/rewards labels` — totals per label (how many are still pending)\n' +
         '`/rewards export` — download a CSV for Excel or Google Sheets\n\n' +
-        'Replies are posted in the channel for everyone to see, with full usernames and crypto addresses.',
+        'Replies are posted in the channel for everyone to see, with full usernames and USDT ETH addresses.',
     }),
   },
   lists: {
@@ -112,6 +112,23 @@ const PAGES = {
         '✏️ **Edit** — pick an entry and change it · 🗑️ **Remove** — pick one or more entries to delete\n' +
         '⚙️ **Settings** — change the title, text and column headers (leave a value header empty to hide that column)\n' +
         '◀ ▶ — pages, for long lists (anyone can use these)',
+    }),
+  },
+  lossback: {
+    label: '💸 Lossback', description: 'Friday-only lossback form, staff list and /rename', mod: true,
+    build: () => ({
+      title: '💸 Lossback 🔒',
+      description:
+        '**Members:** every **Friday only**, they press **Submit lossback** on the panel and enter their username (under your code) and their **USDT ETH** address. The address is checked (must be `0x` + 40 characters). One waiting submission per member until it is paid.\n\n' +
+        '**Setup**\n' +
+        '`/lossback config code: timezone:` — your code shown on the form, and the timezone that decides when "Friday" is (default UTC)\n' +
+        '`/lossback panel list_channel:#staff` — posts the panel and creates the staff list the first time (keep that channel staff-only)\n' +
+        '`/lossback newlist` — start a fresh empty list, e.g. each week; new submissions go to it\n\n' +
+        '**On the list** (columns: Username · USDT ETH Address · Loss)\n' +
+        '✅ **Mark paid** — pick entries to mark paid (pick again to undo) · ⬜ = waiting\n' +
+        '📝 **Bulk edit** — edit the whole page as text, one line per entry: `username | address | loss` (keep the line order; new lines are added)\n' +
+        '➕ **Add** / 📥 **Bulk add** — add people manually · ✏️ **Edit** · 🗑️ **Remove** · ⚙️ **Settings**\n\n' +
+        '**`/rename name: [channel:]`** — rename any channel (this one by default). Discord allows 2 renames per channel every 10 minutes.',
     }),
   },
   gtb: {

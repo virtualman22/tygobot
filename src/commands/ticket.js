@@ -13,12 +13,12 @@ const CATEGORIES = {
   giveaway: {
     label: 'Giveaway Claim', category: 'Giveaway Claims', emoji: '🎁', style: ButtonStyle.Success, channel: 'giveaway', claim: true,
     whatName: 'What they won', whatLabel: 'What did you win?', whatPh: 'e.g. Weekly giveaway', amountPh: 'e.g. $25 or 0.001 BTC',
-    help: 'Congrats on winning! Press **Submit claim details** below and fill in what you won, the amount, your crypto address and your Stake username.',
+    help: 'Congrats on winning! Press **Submit claim details** below and fill in what you won, the amount, your USDT ETH address and your Stake username.',
   },
   milestone: {
     label: 'Milestones', category: 'Milestones', emoji: '🏆', style: ButtonStyle.Primary, channel: 'milestone', claim: true, screenshot: true,
     whatName: 'Milestone', whatLabel: 'Which milestone did you hit?', whatPh: 'e.g. $10,000 wagered', amountPh: 'Reward amount, e.g. $25',
-    help: 'Press **Submit claim details** below and fill in the milestone you hit, the reward amount, your crypto address and your Stake username.\nThen **upload your screenshot in this chat** (or use `/screenshot`).',
+    help: 'Press **Submit claim details** below and fill in the milestone you hit, the reward amount, your USDT ETH address and your Stake username.\nThen **upload your screenshot in this chat** (or use `/screenshot`).',
   },
   tech: {
     label: 'Technical Assistance', category: 'Technical Assistance', emoji: '🛠️', style: ButtonStyle.Secondary, channel: 'support', claim: false,
@@ -27,7 +27,7 @@ const CATEGORIES = {
   bonus: {
     label: 'Bonuses', category: 'Bonuses', emoji: '💰', style: ButtonStyle.Primary, channel: 'bonus', claim: true,
     whatName: 'Bonus', whatLabel: 'Which bonus is this for?', whatPh: 'e.g. Weekly reload bonus', amountPh: 'e.g. $25 or 0.001 BTC',
-    help: 'Press **Submit claim details** below and fill in which bonus it is, the amount, your crypto address and your Stake username.',
+    help: 'Press **Submit claim details** below and fill in which bonus it is, the amount, your USDT ETH address and your Stake username.',
   },
 };
 const SCREENSHOT_CATEGORIES = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].screenshot);
@@ -99,7 +99,7 @@ function claimModal(cat, claimId, v = {}) {
   return new ModalBuilder().setCustomId(`tkclaim:${cat}:${claimId}`).setTitle(`${c.label} — details`).addComponents(
     f('what', c.whatLabel, c.whatPh, 150),
     f('amount', 'How much?', c.amountPh, 60),
-    f('address', 'Crypto address', 'Double check it — payments cannot be reversed', 200),
+    f('address', 'USDT ETH address', 'USDT on Ethereum (ERC-20) — double check, payments can\'t be reversed', 200),
     f('stake_user', 'Stake username', 'Your exact Stake username', 80),
   );
 }
@@ -115,7 +115,7 @@ function claimEmbed(row) {
     { name: 'Member', value: `<@${row.user_id}>`, inline: true },
   ];
   if (row.channel_id !== row.card_channel_id) fields.push({ name: 'Submitted in', value: `<#${row.channel_id}>`, inline: true });
-  fields.push({ name: 'Crypto address', value: `\`\`\`${row.address.replace(/`/g, '')}\`\`\`` });
+  fields.push({ name: 'USDT ETH address', value: `\`\`\`${row.address.replace(/`/g, '')}\`\`\`` });
   if (c.screenshot) {
     fields.push({
       name: 'Screenshot',
@@ -143,7 +143,7 @@ const claimRow = (paid, dq = false) => new ActionRowBuilder().addComponents(
 );
 
 const claimNotes = (r) =>
-  `Crypto address: ${r.address}\nDiscord: <@${r.user_id}>\nSubmitted in: <#${r.channel_id}>${r.screenshot ? `\nScreenshot: ${r.screenshot}` : ''}`;
+  `USDT ETH address: ${r.address}\nDiscord: <@${r.user_id}>\nSubmitted in: <#${r.channel_id}>${r.screenshot ? `\nScreenshot: ${r.screenshot}` : ''}`;
 
 async function refreshCard(client, row) {
   try {

@@ -181,6 +181,13 @@ CREATE TABLE IF NOT EXISTS list_entries (
 CREATE INDEX IF NOT EXISTS idx_list_entries ON list_entries (list_id);
 `);
 
+// Lossback: lists can be of kind 'lossback' (entries get a paid mark and remember which member submitted them)
+for (const sql of ['ALTER TABLE lists ADD COLUMN kind TEXT', 'ALTER TABLE list_entries ADD COLUMN paid INTEGER DEFAULT 0',
+  'ALTER TABLE list_entries ADD COLUMN user_id TEXT', 'ALTER TABLE settings ADD COLUMN lossback_list_id INTEGER',
+  'ALTER TABLE settings ADD COLUMN lossback_tz TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code TEXT']) {
+  try { db.exec(sql); } catch { /* already migrated */ }
+}
+
 // Migration: templates keep a JSON blob so they can hold any announcement style
 try { db.exec('ALTER TABLE templates ADD COLUMN fields TEXT'); } catch { /* already migrated */ }
 
@@ -188,7 +195,7 @@ const SETTING_COLUMNS = [
   'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'welcome_channel', 'welcome_message',
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
-  'xp_enabled', 'automod_links',
+  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code',
 ];
 
 function getSettings(guildId) {

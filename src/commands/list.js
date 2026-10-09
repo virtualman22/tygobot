@@ -5,7 +5,9 @@ const {
 const { db } = require('../db');
 const { eph, isMod, requireMod, truncate, logToGuild } = require('../utils');
 
-const PAGE_SIZE = 20;      // entries per page
+const PAGE_SIZE = 20;      // entries per page (lossback lists use 15: two lines per entry)
+const isLB = l => l.kind === 'lossback';
+const psize = l => (isLB(l) ? 15 : PAGE_SIZE);
 const MAX_ENTRIES = 500;   // per list
 const COLOR = '#9146FF';
 
@@ -35,17 +37,27 @@ function table(l, rows, offset) {
   return '```\n' + out.join('\n') + '\n```';
 }
 
+/** Lossback lists: two lines per entry so the full address can be read and copied. ✅ = paid. */
+function lossbackRows(l, rows, offset) {
+  return rows.map((r, i) => {
+    const loss = r.value2 ? `**${truncate(r.value2.replace(/\*/g, ''), 40)}**` : '*loss not added yet*';
+    const addr = r.value1 ? `\n└ \`${r.value1.replace(/`/g, '')}\`` : '';
+    return `${r.paid ? '✅' : '⬜'} **${offset + i + 1}.** ${truncate(r.name.replace(/\*/g, ''), 40)} — ${l.col3 ?? 'Loss'}: ${loss}${addr}`;
+  }).join('\n');
+}
+
 /** The public list message: an easy-to-read table plus the staff buttons. */
 function render(listId) {
   const l = getList(listId);
   if (!l) return null;
   const total = countEntries(l.id);
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const size = psize(l);
+  const pages = Math.max(1, Math.ceil(total / size));
   const page = Math.min(Math.max(l.page ?? 0, 0), pages - 1);
   if (page !== l.page) db.prepare('UPDATE lists SET page = ? WHERE id = ?').run(page, l.id);
-  const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, PAGE_SIZE, page * PAGE_SIZE);
+  const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, size, page * size);
 
-  const body = rows.length ? table(l, rows, page * PAGE_SIZE) : '*Nothing here yet.*';
+  const body = rows.length ? (isLB(l) ? lossbackRows(l, rows, page * size) : table(l, rows, page * size)) : '*Nothing here yet.*';
   const embed = new EmbedBuilder().setColor(COLOR).setTitle(truncate(`📋 ${l.title}`, 256))
     .setDescription(truncate(`${l.description ? `${l.description}\n\n` : ''}${body}`, 4000))
     .setFooter({ text: `${total} ${total === 1 ? 'entry' : 'entries'}${pages > 1 ? ` · Page ${page + 1}/${pages}` : ''} · List #${l.id}` })
@@ -54,16 +66,20 @@ function render(listId) {
   const components = [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`ls:add:${l.id}`).setLabel('Add').setEmoji('➕').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`ls:bulk:${l.id}`).setLabel('Bulk add').setEmoji('📥').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`ls:bedit:${l.id}`).setLabel('Bulk edit').setEmoji('📝').setStyle(ButtonStyle.Secondary).setDisabled(!total),
     new ButtonBuilder().setCustomId(`ls:edit:${l.id}`).setLabel('Edit').setEmoji('✏️').setStyle(ButtonStyle.Primary).setDisabled(!total),
     new ButtonBuilder().setCustomId(`ls:rem:${l.id}`).setLabel('Remove').setEmoji('🗑️').setStyle(ButtonStyle.Danger).setDisabled(!total),
-    new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary),
   )];
+  const second = [];
+  if (isLB(l)) second.push(new ButtonBuilder().setCustomId(`ls:paid:${l.id}`).setLabel('Mark paid').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(!total));
+  second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
   if (pages > 1) {
-    components.push(new ActionRowBuilder().addComponents(
+    second.push(
       new ButtonBuilder().setCustomId(`ls:pg:${l.id}:-1`).setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
       new ButtonBuilder().setCustomId(`ls:pg:${l.id}:1`).setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1),
-    ));
+    );
   }
+  components.push(new ActionRowBuilder().addComponents(second));
   return { embeds: [embed], components };
 }
 
@@ -107,22 +123,42 @@ function entryModal(customId, l, e = {}) {
 }
 
 /** The select menu used by Edit and Remove: the entries on the page currently shown. */
-function entryPicker(l, kind) {
-  const total = countEntries(l.id);
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+function pageRows(l) {
+  const size = psize(l);
+  const pages = Math.max(1, Math.ceil(countEntries(l.id) / size));
   const page = Math.min(Math.max(l.page ?? 0, 0), pages - 1);
-  const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, PAGE_SIZE, page * PAGE_SIZE);
+  return { page, rows: db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, size, page * size) };
+}
+
+function entryPicker(l, kind) {
+  const { page, rows } = pageRows(l);
   if (!rows.length) return null;
   const menu = new StringSelectMenuBuilder().setCustomId(`lssel:${kind}:${l.id}`)
-    .setPlaceholder(kind === 'edit' ? 'Which entry do you want to edit?' : 'Pick the entries to remove…')
+    .setPlaceholder({ edit: 'Which entry do you want to edit?', rem: 'Pick the entries to remove…', paid: 'Pick entries to toggle paid / unpaid…' }[kind])
     .addOptions(rows.map((r, i) => {
-      const opt = { label: truncate(`${page * PAGE_SIZE + i + 1}. ${r.name}`, 100), value: String(r.id) };
+      const opt = { label: truncate(`${kind === 'paid' ? (r.paid ? '✅ ' : '⬜ ') : ''}${page * psize(l) + i + 1}. ${r.name}`, 100), value: String(r.id) };
       const desc = [r.value1, r.value2].filter(Boolean).join(' · ');
       if (desc) opt.description = truncate(desc, 100);
       return opt;
     }));
-  if (kind === 'rem') menu.setMinValues(1).setMaxValues(rows.length);
+  if (kind !== 'edit') menu.setMinValues(1).setMaxValues(rows.length);
   return new ActionRowBuilder().addComponents(menu);
+}
+
+/** Posts a new list message and saves it. Used by /list create and by the lossback system. Throws if it can't post. */
+async function createList(target, { guildId, title, description = null, col1 = 'Name', col2 = null, col3 = null, kind = null, userId = null }) {
+  const res = db.prepare(`INSERT INTO lists (guild_id, channel_id, title, description, col1, col2, col3, kind, created_by, created_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(guildId, target.id, clean(title, 100), description, col1, col2, col3, kind, userId, Date.now());
+  const id = Number(res.lastInsertRowid);
+  try {
+    const msg = await target.send(render(id));
+    db.prepare('UPDATE lists SET message_id = ? WHERE id = ?').run(msg.id, id);
+  } catch (e) {
+    db.prepare('DELETE FROM lists WHERE id = ?').run(id);
+    throw e;
+  }
+  return id;
 }
 
 // ---------- command ----------
@@ -150,20 +186,16 @@ async function execute(interaction) {
 
   if (sub === 'create') {
     const target = interaction.options.getChannel('channel') ?? interaction.channel;
-    const res = db.prepare(`INSERT INTO lists (guild_id, channel_id, title, description, col1, col2, col3, created_by, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(g, target.id, clean(interaction.options.getString('title'), 100),
-        interaction.options.getString('description')?.trim() || null,
-        clean(interaction.options.getString('name_header'), 30) || 'Name',
-        clean(interaction.options.getString('value1'), 30) || null,
-        clean(interaction.options.getString('value2'), 30) || null,
-        interaction.user.id, Date.now());
-    const id = Number(res.lastInsertRowid);
+    let id;
     try {
-      const msg = await target.send(render(id));
-      db.prepare('UPDATE lists SET message_id = ? WHERE id = ?').run(msg.id, id);
+      id = await createList(target, {
+        guildId: g, userId: interaction.user.id, title: interaction.options.getString('title'),
+        description: interaction.options.getString('description')?.trim() || null,
+        col1: clean(interaction.options.getString('name_header'), 30) || 'Name',
+        col2: clean(interaction.options.getString('value1'), 30) || null,
+        col3: clean(interaction.options.getString('value2'), 30) || null,
+      });
     } catch (e) {
-      db.prepare('DELETE FROM lists WHERE id = ?').run(id);
       return interaction.reply(eph({ content: `❌ Couldn't post the list there: ${e.message}` }));
     }
     await logToGuild(interaction.client, g, `📋 <@${interaction.user.id}> created list **${clean(interaction.options.getString('title'), 100)}** (#${id}) in ${target}.`);
@@ -219,13 +251,29 @@ const buttons = {
           `${['Alice', '$25', 'Paid'].slice(0, cols.length).join(' | ')}\n${['Bob', '$10', 'Pending'].slice(0, cols.length).join(' | ')}`)));
     }
 
-    if (action === 'edit' || action === 'rem') {
+    if (action === 'bedit') {
+      const { page, rows } = pageRows(l);
+      const keys = valueCols(l).map(c => c.key);
+      const lines = [];
+      let len = 0;
+      for (const r of rows) {
+        const line = [r.name, ...keys.map(k => r[k] ?? '')].map(x => String(x).replace(/\|/g, '/')).join(' | ');
+        if (len + line.length + 1 > 3900) break;
+        lines.push(line); len += line.length + 1;
+      }
+      const heads = [l.col1, ...valueCols(l).map(c => c.head)].join(' | ');
+      return interaction.showModal(new ModalBuilder().setCustomId(`lsbedit:${l.id}:${page}:${lines.length}`).setTitle(`Bulk edit (page ${page + 1})`).addComponents(
+        field('lines', truncate(`${heads} — keep the line order`, 45), TextInputStyle.Paragraph, 4000, true, lines.join('\n'))));
+    }
+
+    if (action === 'edit' || action === 'rem' || action === 'paid') {
+      if (action === 'paid' && !isLB(l)) return interaction.reply(eph({ content: 'Paid marks are only on lossback lists.' }));
       const picker = entryPicker(l, action);
       if (!picker) return interaction.reply(eph({ content: 'The list is empty.' }));
       const total = countEntries(l.id);
-      const more = total > PAGE_SIZE ? '\n*(Shows the page currently displayed — use ◀ ▶ on the list to reach other entries.)*' : '';
+      const more = total > psize(l) ? '\n*(Shows the page currently displayed — use ◀ ▶ on the list to reach other entries.)*' : '';
       return interaction.reply(eph({
-        content: (action === 'edit' ? '✏️ Pick the entry to edit:' : '🗑️ Pick one or more entries to remove:') + more,
+        content: { edit: '✏️ Pick the entry to edit:', rem: '🗑️ Pick one or more entries to remove:', paid: '✅ Pick the entries to mark as paid (picking a paid one marks it unpaid again):' }[action] + more,
         components: [picker],
       }));
     }
@@ -254,6 +302,16 @@ const selects = {
       const e = db.prepare('SELECT * FROM list_entries WHERE id = ? AND list_id = ?').get(Number(interaction.values[0]), l.id);
       if (!e) return interaction.update({ content: '❌ That entry no longer exists.', components: [] });
       return interaction.showModal(entryModal(`lsedit:${l.id}:${e.id}`, l, e));
+    }
+
+    if (kind === 'paid') {
+      const ids = interaction.values.map(Number);
+      const q = `list_id = ? AND id IN (${ids.map(() => '?').join(',')})`;
+      const before = db.prepare(`SELECT name, paid FROM list_entries WHERE ${q}`).all(l.id, ...ids);
+      db.prepare(`UPDATE list_entries SET paid = 1 - COALESCE(paid, 0) WHERE ${q}`).run(l.id, ...ids);
+      await refreshMessage(interaction.client, l.id);
+      await logToGuild(interaction.client, interaction.guildId, `✅ <@${interaction.user.id}> toggled paid on ${before.map(b => `**${b.name}** (${b.paid ? 'now unpaid' : 'now paid'})`).join(', ')} in list **${l.title}**.`);
+      return interaction.update({ content: `✅ Updated ${before.length} ${before.length === 1 ? 'entry' : 'entries'}.`, components: [] });
     }
 
     if (kind === 'rem') {
@@ -305,15 +363,41 @@ const modals = {
     return applyChange(interaction, l.id, `✅ Added ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}${skipped ? ` (${skipped} skipped: the list is full)` : ''}.`);
   },
 
+  // Edits the entries on one page from a text box: line N = entry N of that page. Extra lines are added; missing lines change nothing.
+  async lsbedit(interaction, [idStr, pageStr, nStr]) {
+    if (!requireMod(interaction)) return;
+    const l = getList(Number(idStr));
+    if (!l) return interaction.reply(eph({ content: '❌ This list no longer exists.' }));
+    const size = psize(l);
+    const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, Number(nStr), Number(pageStr) * size);
+    const keys = valueCols(l).map(c => c.key);
+    const lines = interaction.fields.getTextInputValue('lines').split('\n').map(line => line.split('|').map(p => clean(p, 100)));
+    const upd = db.prepare('UPDATE list_entries SET name = ?, value1 = ?, value2 = ? WHERE id = ?');
+    const ins = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2) VALUES (?, ?, ?, ?)');
+    const vals = parts => ({ value1: null, value2: null, ...Object.fromEntries(keys.map((k, j) => [k, parts[1 + j] || null])) });
+    let changed = 0, added = 0, room = MAX_ENTRIES - countEntries(l.id);
+    db.transaction(() => {
+      lines.forEach((parts, i) => {
+        if (!parts[0]) return;
+        const v = vals(parts);
+        if (i < rows.length) {
+          const r = rows[i];
+          if (r.name !== parts[0] || (r.value1 ?? null) !== v.value1 || (r.value2 ?? null) !== v.value2) { upd.run(parts[0], v.value1, v.value2, r.id); changed++; }
+        } else if (room > 0) { ins.run(l.id, parts[0], v.value1, v.value2); added++; room--; }
+      });
+    })();
+    return applyChange(interaction, l.id, `✅ Bulk edit saved: ${changed} updated, ${added} added.`);
+  },
+
   async lsset(interaction, [idStr]) {
     if (!requireMod(interaction)) return;
     const l = getList(Number(idStr));
     if (!l) return interaction.reply(eph({ content: '❌ This list no longer exists.' }));
     const t = id => interaction.fields.getTextInputValue(id).trim();
     db.prepare('UPDATE lists SET title = ?, description = ?, col1 = ?, col2 = ?, col3 = ? WHERE id = ?')
-      .run(clean(t('title'), 100), t('description') || null, clean(t('col1'), 30) || 'Name', clean(t('col2'), 30) || null, clean(t('col3'), 30) || null, l.id);
+      .run(clean(t('title'), 100), t('description') || null, clean(t('col1'), 30) || 'Name', clean(t('col2'), 30) || null, clean(t('col2'), 30) ? clean(t('col3'), 30) || null : null, l.id);
     return applyChange(interaction, l.id, '✅ List settings saved.');
   },
 };
 
-module.exports = { data, execute, autocomplete, buttons, selects, modals };
+module.exports = { data, execute, autocomplete, buttons, selects, modals, createList, refreshMessage, getList, render, countEntries };
