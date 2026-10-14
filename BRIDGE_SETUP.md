@@ -32,3 +32,26 @@ Staff who press the buttons must be on the website's staff list (`mod_discord_id
 - If the bot is offline or redeploys, nothing is lost or posted twice: the website remembers how far the bot got. If a channel is not set, those events are skipped (and `/sitelink status` shows the count).
 - Tickets that were already open before you switch this on are not mirrored (only new ones).
 - Don't run the bot's own `/gtb` in the same channel as the website GTB.
+
+# Payout tracking on the website (claim forms, lossbacks, ledger)
+
+Needs the same link as above (SITE_URL + BRIDGE_SECRET). Nothing else to configure.
+
+What the bot now copies to the website (about a minute after it starts, then every minute), **old records included**:
+- claim forms from Discord tickets (giveaway / bonus / milestone), with the screenshot link and disqualified ones
+- the manual `/rewards` tracker (only entries that are not already a claim form, so nothing is counted twice)
+- weekly lossback lists (`/lossback`), every entry from every list
+
+On the website (Tickets page in the admin):
+- **To pay** tab: new box "Discord claim forms & rewards waiting" under the website rewards.
+- **Lossbacks** tab (next to To pay): Waiting / Paid / All, grouped by list, with address copy buttons and totals.
+- **Payout ledger**: cards for Giveaways, Bonuses, Lossbacks (plus Milestones / Other when there are some) and **All categories**. Each shows the total per currency, the combined "USD & stablecoins" figure (USD + USDT + USDC) and the number of payouts. Category chips filter the table; the CSV export has a category and source column and includes the Discord rows.
+- Paying still happens where it did (Mark paid in Discord, or on the website for website rewards). Paid rows appear in the ledger by themselves.
+
+Things to know
+- The amount is read from the text people/staff typed (`$25`, `25 USDT`, `0.001 BTC`, `1,250`, `25k`; a bare number counts as USD). Anything it can't read (e.g. "VIP role") is shown as **NOT COUNTED** and left out of the totals until an admin presses **Fix** and gives it an amount, currency and category. Fixes survive every bot update.
+- For lossbacks the amount is the **Loss** column that staff fill in on the list. If you pay a percentage of it, the lossback total shows losses, not the payout.
+- Old lossbacks that were already paid have no payment date in the bot, so they get the date of their list and are marked "(approx.)". From now on the real date is recorded.
+- Old manual `/rewards` entries have no category, so it is guessed from the label ("…bonus…" = Bonuses, "…lossback…", "…giveaway…"); otherwise Other. Use Fix to change one.
+- Website rewards have a Category dropdown when you add them; older website payouts are guessed from the reward name (default Giveaways).
+- The site never deletes these records, so history stays even if something is removed in Discord.

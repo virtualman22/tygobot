@@ -16,6 +16,7 @@ const data = new SlashCommandBuilder()
 async function execute(interaction) {
   const sub = interaction.options.getSubcommand();
   const st = bridge.state;
+  const sync = require('../siteSync').state;
   if (sub === 'status') {
     const open = db.prepare("SELECT COUNT(*) c FROM site_tickets").get().c;
     return interaction.reply(eph({ embeds: [new EmbedBuilder().setColor(bridge.enabled() ? (st.lastError ? '#E74C3C' : '#2ECC71') : '#95A5A6').setTitle('🔗 Website link')
@@ -26,6 +27,7 @@ async function execute(interaction) {
         { name: 'Site tickets channel', value: ch(bridge.ticketChannelId()), inline: true },
         { name: 'Handled / dropped', value: `${st.handled} / ${st.dropped}`, inline: true },
         { name: 'Tickets mirrored', value: String(open), inline: true },
+        { name: 'Payout records on site', value: sync.error ? `🔴 ${sync.error}` : sync.last ? `✅ ${sync.total} records, last sync ${ago(sync.last)}` : '🟡 first sync pending', inline: false },
       )] }));
   }
   if (sub === 'test') {

@@ -270,6 +270,7 @@ function start(client) {
   console.log(`[site bridge] on: polling ${SITE} every ${POLL_MS / 1000}s, guesses posted ${GUESS_MODE === 'live' ? 'live' : 'when guessing closes'}`);
   tick();
   timer = setInterval(tick, POLL_MS);
+  require('./siteSync').start(client, api);     // claim forms, rewards tracker and lossbacks -> website (old ones too)
 }
 
 module.exports = { start, tick, api, enabled, state, cardEmbed, handle, SITE, gtbChannelId, ticketChannelId, _setClient: c => { clientRef = c; } };
