@@ -6,7 +6,7 @@ const ch = id => (id ? `<#${id}>` : '*not set*');
 const hr = h => (h == null ? '*off*' : `${String(h).padStart(2, '0')}:00 UTC`);
 
 const CLEARABLE = [
-  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'welcome_channel', 'qotd_channel', 'qotd_hour',
+  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'welcome_channel', 'qotd_channel', 'qotd_hour',
   'trivia_channel', 'trivia_hour', 'suggest_channel', 'starboard_channel',
 ];
 
@@ -22,6 +22,8 @@ const data = new SlashCommandBuilder()
     .addRoleOption(o => o.setName('mod_role').setDescription('Role that can use mod commands (besides Manage Messages)'))
     .addChannelOption(o => o.setName('log_channel').setDescription('Mod log channel').addChannelTypes(...text))
     .addChannelOption(o => o.setName('claims_channel').setDescription('Private staff channel where ALL submitted claim forms are sent').addChannelTypes(...text))
+    .addChannelOption(o => o.setName('gtb_channel').setDescription('Guess The Balance channel: the bot posts every website guess + the result here').addChannelTypes(...text))
+    .addChannelOption(o => o.setName('site_tickets_channel').setDescription('PRIVATE staff channel: website tickets get a thread here').addChannelTypes(...text))
     .addChannelOption(o => o.setName('welcome_channel').setDescription('Welcome message channel').addChannelTypes(...text))
     .addStringOption(o => o.setName('welcome_message').setDescription('Use {user} {server} {count}').setMaxLength(500))
     .addChannelOption(o => o.setName('qotd_channel').setDescription('Question of the Day channel').addChannelTypes(...text))
@@ -57,6 +59,7 @@ async function execute(interaction) {
   const s = getSettings(g);
   const embed = new EmbedBuilder().setColor('#9146FF').setTitle('⚙️ Server settings').addFields(
     { name: 'Announcements', value: `Channel: ${ch(s.announce_channel)}\nMod role: ${s.mod_role ? `<@&${s.mod_role}>` : '*not set*'}\nLog: ${ch(s.log_channel)}\nClaims: ${ch(s.claims_channel)}` },
+    { name: 'Website link', value: `GTB: ${ch(s.gtb_channel)}\nSite tickets: ${ch(s.site_tickets_channel)}\nStatus: \`/sitelink status\`` },
     { name: 'Welcome', value: `Channel: ${ch(s.welcome_channel)}\nMessage: ${s.welcome_message}` },
     { name: 'Daily posts', value: `QOTD: ${ch(s.qotd_channel)} at ${hr(s.qotd_hour)}\nTrivia: ${ch(s.trivia_channel)} at ${hr(s.trivia_hour)}` },
     { name: 'Community', value: `Suggestions: ${ch(s.suggest_channel)}\nStarboard: ${ch(s.starboard_channel)} (${s.starboard_threshold}⭐)\nTickets: *own category per type (Giveaway Claims, Bonuses, Technical Assistance, Milestones)*` },

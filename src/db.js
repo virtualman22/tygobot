@@ -159,6 +159,20 @@ if (!db.prepare('SELECT 1 FROM claims LIMIT 1').get()) {
 }
 try { db.exec('ALTER TABLE settings ADD COLUMN claims_channel TEXT'); } catch { /* already migrated */ }
 
+// website link (src/bridge.js)
+for (const col of ['gtb_channel TEXT', 'site_tickets_channel TEXT']) {
+  try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch { /* already migrated */ }
+}
+db.exec(`
+CREATE TABLE IF NOT EXISTS site_tickets (
+  ticket_id TEXT PRIMARY KEY, num INTEGER, channel_id TEXT, thread_id TEXT, card_id TEXT, info TEXT
+);
+CREATE TABLE IF NOT EXISTS site_gtb_guesses (
+  hunt_id TEXT NOT NULL, discord_id TEXT NOT NULL, name TEXT, guess REAL, ts INTEGER,
+  PRIMARY KEY (hunt_id, discord_id)
+);
+`);
+
 // Claims can be disqualified by staff (frees the member's slot for that category)
 for (const col of ['disqualified INTEGER DEFAULT 0', 'dq_by TEXT', 'dq_reason TEXT', 'dq_at INTEGER']) {
   try { db.exec(`ALTER TABLE claims ADD COLUMN ${col}`); } catch { /* already migrated */ }
@@ -192,7 +206,7 @@ for (const sql of ['ALTER TABLE lists ADD COLUMN kind TEXT', 'ALTER TABLE list_e
 try { db.exec('ALTER TABLE templates ADD COLUMN fields TEXT'); } catch { /* already migrated */ }
 
 const SETTING_COLUMNS = [
-  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'welcome_channel', 'welcome_message',
+  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'welcome_channel', 'welcome_message',
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
   'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code',
