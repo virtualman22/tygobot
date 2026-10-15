@@ -198,7 +198,8 @@ CREATE INDEX IF NOT EXISTS idx_list_entries ON list_entries (list_id);
 // Lossback: lists can be of kind 'lossback' (entries get a paid mark and remember which member submitted them)
 for (const sql of ['ALTER TABLE lists ADD COLUMN kind TEXT', 'ALTER TABLE list_entries ADD COLUMN paid INTEGER DEFAULT 0',
   'ALTER TABLE list_entries ADD COLUMN user_id TEXT', 'ALTER TABLE settings ADD COLUMN lossback_list_id INTEGER',
-  'ALTER TABLE settings ADD COLUMN lossback_tz TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code TEXT']) {
+  'ALTER TABLE settings ADD COLUMN lossback_tz TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code TEXT',
+  'ALTER TABLE list_entries ADD COLUMN dq INTEGER DEFAULT 0', 'ALTER TABLE list_entries ADD COLUMN dq_reason TEXT']) {
   try { db.exec(sql); } catch { /* already migrated */ }
 }
 

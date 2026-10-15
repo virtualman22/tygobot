@@ -27,6 +27,7 @@ const tries = new Map();
 let running = false;
 let timer = null;
 let clientRef = null;
+let cmdTouched = false;                 // a website command changed a record: send it back to the site right after this poll
 
 const money = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const clip = (s, n) => (String(s ?? '').length > n ? String(s).slice(0, n - 1) + '…' : String(s ?? ''));
@@ -232,8 +233,16 @@ function warn(msg) {
 }
 
 async function handle(ev) {
+  if (ev.type === 'record.cmd') { const k = await require('./siteCmd').handle(clientRef, ev, api); if (k.length) cmdTouched = true; return; }
   if (ev.type.startsWith('gtb.')) return onGtb(ev);
   if (ev.type.startsWith('ticket.')) return onTicket(ev);
+}
+
+/** Sends changed records to the site now (not in a minute). If a sync is already running, tries again shortly. */
+function kickSync(n = 0) {
+  const sync = require('./siteSync');
+  if (sync.state.running && n < 5) return setTimeout(() => kickSync(n + 1), 2500);
+  sync.syncOnce(clientRef, api).catch(() => {});
 }
 
 async function tick() {
@@ -255,6 +264,7 @@ async function tick() {
       }
     }
     if (ackTo) await api('POST', { action: 'ack', consumer: 'bot', seq: ackTo });
+    if (cmdTouched) { cmdTouched = false; kickSync(); }
     state.lastOk = Date.now(); state.lastError = null;
   } catch (e) {
     state.lastError = e.message; state.lastErrorAt = Date.now();

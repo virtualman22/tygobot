@@ -112,10 +112,10 @@ function claimEmbed(row) {
     { name: c.whatName, value: truncate(row.what, 1024) },
     { name: 'How much', value: truncate(row.amount, 1024), inline: true },
     { name: 'Stake username', value: truncate(row.stake_user, 1024), inline: true },
-    { name: 'Member', value: `<@${row.user_id}>`, inline: true },
+    { name: 'Member', value: row.user_id && row.user_id !== '0' ? `<@${row.user_id}>` : '—', inline: true },
   ];
-  if (row.channel_id !== row.card_channel_id) fields.push({ name: 'Submitted in', value: `<#${row.channel_id}>`, inline: true });
-  fields.push({ name: 'USDT ETH address', value: `\`\`\`${row.address.replace(/`/g, '')}\`\`\`` });
+  if (row.channel_id !== row.card_channel_id && /^\d+$/.test(row.channel_id) && row.channel_id !== '0') fields.push({ name: 'Submitted in', value: `<#${row.channel_id}>`, inline: true });
+  fields.push({ name: 'USDT ETH address', value: `\`\`\`${String(row.address || '—').replace(/`/g, '')}\`\`\`` });
   if (c.screenshot) {
     fields.push({
       name: 'Screenshot',
@@ -181,6 +181,50 @@ async function payClaim(client, claim, userId) {
 
   await logToGuild(client, claim.guild_id, `💸 <@${userId}> marked **${claim.amount}** (${claim.stake_user}) as paid. Rewards entry #${claim.reward_id}.`);
   return { fresh, notified };
+}
+
+/** Disqualifies a claim: cancels its rewards entry, updates the card, tells the member and logs it. Used by the card button and by the website. */
+async function dqClaim(client, row, userId, reason = '') {
+  const now = Date.now();
+  db.prepare('UPDATE claims SET disqualified = 1, dq_by = ?, dq_reason = ?, dq_at = ? WHERE id = ?').run(userId, reason || null, now, row.id);
+  db.prepare("UPDATE rewards SET status = 'Cancelled', updated_at = ? WHERE id = ?").run(now, row.reward_id);
+  await refreshCard(client, db.prepare('SELECT * FROM claims WHERE id = ?').get(row.id));
+
+  let notified = false;
+  try {
+    const origin = await client.channels.fetch(row.channel_id);
+    await origin.send({
+      content: `🚫 ${row.user_id && row.user_id !== '0' ? `<@${row.user_id}>` : row.stake_user} your **${CATEGORIES[row.category].label}** claim (**${row.amount}**) was disqualified by staff.${reason ? `\n**Reason:** ${reason}` : ''}`,
+      allowedMentions: { users: [row.user_id] },
+    });
+    notified = true;
+  } catch { /* channel deleted or no access */ }
+
+  await logToGuild(client, row.guild_id, `🚫 <@${userId}> disqualified ${row.stake_user}'s **${row.amount}** claim${reason ? ` (${reason})` : ''}. Rewards entry #${row.reward_id} set to Cancelled.`);
+  return { notified };
+}
+
+/** Registers a claim by hand (the website's "register payout"): rewards entry + claim row + card in the claims channel when one is set. */
+async function createClaim(client, { guildId, userId, cat, what, amount, address, stake }) {
+  const c = CATEGORIES[cat];
+  const now = Date.now();
+  const destId = cardDestination(guildId);
+  const uid = userId || '0';
+  const draft = { guild_id: guildId, channel_id: destId || '0', user_id: uid, category: cat, what, amount, address: address || '', stake_user: stake, card_channel_id: destId, paid: 0, screenshot: null };
+  const rw = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?)`)
+    .run(guildId, c.label, stake, truncate(`${what} (${amount})`, 200), claimNotes(draft), uid, now, now);
+  draft.reward_id = Number(rw.lastInsertRowid);
+  const cr = db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, what, amount, address, stake_user, reward_id, card_channel_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(guildId, draft.channel_id, uid, cat, what, amount, draft.address, stake, draft.reward_id, destId);
+  const id = Number(cr.lastInsertRowid);
+  if (destId) {
+    try {
+      const dest = await client.channels.fetch(destId);
+      const msg = await dest.send({ embeds: [claimEmbed(draft)], components: [claimRow(false)] });
+      db.prepare('UPDATE claims SET message_id = ? WHERE id = ?').run(msg.id, id);
+    } catch { /* the claim is saved; it just has no card */ }
+  }
+  return { id, rewardId: draft.reward_id };
 }
 
 /** On startup, re-draw cards still waiting for payment so older ones also get the Disqualify button. */
@@ -392,24 +436,9 @@ const modals = {
     await interaction.deferReply(eph());
 
     const reason = interaction.fields.getTextInputValue('reason').trim();
-    const now = Date.now();
-    db.prepare('UPDATE claims SET disqualified = 1, dq_by = ?, dq_reason = ?, dq_at = ? WHERE id = ?').run(interaction.user.id, reason || null, now, row.id);
-    db.prepare("UPDATE rewards SET status = 'Cancelled', updated_at = ? WHERE id = ?").run(now, row.reward_id);
-    await refreshCard(interaction.client, db.prepare('SELECT * FROM claims WHERE id = ?').get(row.id));
-
-    let notified = false;
-    try {
-      const origin = await interaction.client.channels.fetch(row.channel_id);
-      await origin.send({
-        content: `🚫 <@${row.user_id}> your **${CATEGORIES[row.category].label}** claim (**${row.amount}**) was disqualified by staff.${reason ? `\n**Reason:** ${reason}` : ''}`,
-        allowedMentions: { users: [row.user_id] },
-      });
-      notified = true;
-    } catch { /* channel deleted or no access */ }
-
-    await logToGuild(interaction.client, interaction.guildId, `🚫 <@${interaction.user.id}> disqualified ${row.stake_user}'s **${row.amount}** claim${reason ? ` (${reason})` : ''}. Rewards entry #${row.reward_id} set to Cancelled.`);
+    const { notified } = await dqClaim(interaction.client, row, interaction.user.id, reason);
     return interaction.editReply({ content: `🚫 Claim disqualified and the rewards entry is now Cancelled. ${notified ? 'The member was told in their chat.' : 'I couldn\'t reach the member\'s chat.'} They can submit a new claim for this category.` });
   },
 };
 
-module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, refreshOpenCards };
+module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, dqClaim, createClaim, refreshCard, claimNotes, refreshOpenCards };

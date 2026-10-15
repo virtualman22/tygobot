@@ -137,7 +137,7 @@ const buttons = {
     if (!isFriday(tz)) return interaction.reply(eph({ content: closedMessage(tz) }));
     const l = activeList(g);
     if (!l) return interaction.reply(eph({ content: '❌ Lossback isn\'t set up yet. Please tell a mod.' }));
-    const mine = db.prepare('SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(paid, 0) = 0').get(l.id, interaction.user.id);
+    const mine = db.prepare('SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0').get(l.id, interaction.user.id);
     if (mine) return interaction.reply(eph({ content: '✅ You already have a lossback submission waiting for staff. You can submit again once it has been paid.' }));
 
     const code = getSettings(g).lossback_code;
@@ -163,7 +163,7 @@ const modals = {
     if (!ETH_ADDRESS.test(address)) {
       return interaction.reply(eph({ content: '❌ That doesn\'t look like a valid **USDT ETH** address. It must start with `0x` followed by 40 characters (letters a–f and numbers). Please press the button and try again.' }));
     }
-    if (db.prepare('SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(paid, 0) = 0').get(l.id, interaction.user.id)) {
+    if (db.prepare('SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0').get(l.id, interaction.user.id)) {
       return interaction.reply(eph({ content: '✅ You already have a lossback submission waiting for staff.' }));
     }
     db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id) VALUES (?, ?, ?, NULL, ?)').run(l.id, username, address, interaction.user.id);

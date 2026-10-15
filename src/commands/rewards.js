@@ -303,4 +303,4 @@ const modals = {
   },
 };
 
-module.exports = { data, execute, autocomplete, buttons, modals };
+module.exports = { data, execute, autocomplete, buttons, modals, markPaid };

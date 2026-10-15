@@ -42,7 +42,7 @@ function lossbackRows(l, rows, offset) {
   return rows.map((r, i) => {
     const loss = r.value2 ? `**${truncate(r.value2.replace(/\*/g, ''), 40)}**` : '*loss not added yet*';
     const addr = r.value1 ? `\n└ \`${r.value1.replace(/`/g, '')}\`` : '';
-    return `${r.paid ? '✅' : '⬜'} **${offset + i + 1}.** ${truncate(r.name.replace(/\*/g, ''), 40)} — ${l.col3 ?? 'Loss'}: ${loss}${addr}`;
+    return `${r.dq ? '🚫' : r.paid ? '✅' : '⬜'} **${offset + i + 1}.** ${truncate(r.name.replace(/\*/g, ''), 40)} — ${l.col3 ?? 'Loss'}: ${loss}${addr}`;
   }).join('\n');
 }
 

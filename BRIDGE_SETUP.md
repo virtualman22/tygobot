@@ -55,3 +55,20 @@ Things to know
 - Old manual `/rewards` entries have no category, so it is guessed from the label ("…bonus…" = Bonuses, "…lossback…", "…giveaway…"); otherwise Other. Use Fix to change one.
 - Website rewards have a Category dropdown when you add them; older website payouts are guessed from the reward name (default Giveaways).
 - The site never deletes these records, so history stays even if something is removed in Discord.
+
+
+## Managing payouts from the website (both ways)
+
+On the website's admin Tickets page (To pay, Lossbacks, Payout ledger) staff can **Mark paid**, **Disqualify** and **＋ Register payout**; admins can also **Fix** (amount, category, source, note) and **Delete**.
+Each action is sent to the bot over the same bridge and applied exactly as if it was done in Discord:
+
+| On the site | What the bot does |
+|---|---|
+| Mark paid | claim: card updated, member told in their chat, ticket renamed `paid-…`; reward: set to Paid; lossback: marked paid |
+| Disqualify | claim: card + member told with the reason; reward: Cancelled; lossback: 🚫 and the member can submit again |
+| Delete | claim row + rewards entry + the card message are removed; or the lossback list entry |
+| Fix | claim / reward / lossback amount text and claim category updated; source (Discord, Kick, X, Other) and note stored |
+| Register payout | giveaway/bonus/milestone: claim + card in the claims channel; lossback: entry in the active list (`/lossback`); other: rewards tracker entry |
+
+The site row shows **⏳ SYNCING** until the bot has applied it (seconds). If the bot cannot apply something (for example no lossback list exists yet) the row shows **⚠ BOT: …**.
+A record deleted on the site never comes back from a bot update. If the bot is offline, actions wait (up to 7 days) and are applied when it is back.

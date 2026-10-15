@@ -12,6 +12,7 @@
  */
 const crypto = require('crypto');
 const { db } = require('./db');
+require('./siteCmd');                       // makes sure the site_meta table exists
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS site_sync (key TEXT PRIMARY KEY, hash TEXT, paid_seen_at INTEGER, paid_approx INTEGER DEFAULT 0);
@@ -24,6 +25,7 @@ const sec = ms => (ms ? Math.floor(Number(ms) / 1000) : null);
 const state = { last: 0, sent: 0, error: null, total: 0, running: false };
 let timer = null;
 
+const metaOf = key => db.prepare('SELECT origin, note, tmp FROM site_meta WHERE key = ?').get(key);
 const nameOf = id => db.prepare('SELECT name FROM site_user_names WHERE user_id = ?').get(String(id ?? ''))?.name || '';
 
 /** Looks up Discord usernames for the people in the records (a few per run, remembered in the database). */
@@ -80,10 +82,14 @@ function build() {
       else { paidAt = sec(e.l_created); approx = 1; }                                  // old entry, already paid before we ever saw it: date = when its list was made
     }
     out.push({
-      key, kind: 'lossback', status: paid ? 'paid' : 'pending', user_id: e.user_id, discord_name: nameOf(e.user_id), user: e.name,
+      key, kind: 'lossback', status: e.dq ? 'cancelled' : paid ? 'paid' : 'pending', note: e.dq ? `Disqualified${e.dq_reason ? ': ' + e.dq_reason : ''}` : '', user_id: e.user_id, discord_name: nameOf(e.user_id), user: e.name,
       what: e.l_title, group: e.l_title, amount_text: e.value2, address: e.value1,
       created_at: sec(e.l_created), paid_at: paidAt, paid_approx: Boolean(approx),
     });
+  }
+  for (const r of out) {                                   // source / note set on the website, and the placeholder key it was created under
+    const m = metaOf(r.key);
+    if (m) { r.origin = m.origin || ''; r.admin_note = m.note || ''; if (m.tmp) r.replaces = m.tmp; }
   }
   return out;
 }
