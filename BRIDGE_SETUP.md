@@ -80,7 +80,7 @@ A record deleted on the site never comes back from a bot update. If the bot is o
 Developer Portal → your bot → *Message Content Intent* ON, and on Railway set `ENABLE_PRIVILEGED_INTENTS=true`. `/sitelink status` tells you if it is on.
 
 - A ticket opened with the panel buttons in Discord appears on the website's **Tickets** page (marked **DISCORD**), with the member's Stake / Kick / wallet if they are registered.
-- What the member and staff write in the channel shows in the site ticket. What staff write on the site is posted in the channel as `🖥️ name (website): …` (internal notes stay on the site). Nothing is echoed back.
+- What the member and staff write in the channel shows in the site ticket. What staff write on the site is posted in the channel as `**name**: …` (internal notes stay on the site). Nothing is echoed back.
 - Claim / close on the site is announced in the channel (the channel itself is kept; use **Close ticket** in Discord to delete it). Closing in Discord closes the site ticket; a new message re-opens it.
 - Old ticket channels that existed before this update are picked up on their first new message.
 - **＋ Open a Discord ticket for a member** (Tickets page): choose the category and the member (search registered members, or paste a Discord ID). The bot creates the private channel exactly like the panel button, posts your optional first message, and the ticket opens on the site.

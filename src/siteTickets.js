@@ -4,7 +4,7 @@
  *   Discord -> site   a ticket channel opens           => a site ticket appears (marked DISCORD)
  *                     anyone writes in the channel     => the message shows in the site ticket (staff or member)
  *                     the channel is closed / deleted  => the site ticket is closed
- *   Site -> Discord   staff reply / claim / close on the site  => posted in the channel ("🖥️ name (website): …")
+ *   Site -> Discord   staff reply / claim / close on the site  => posted in the channel ("name: …")
  *                     staff "open a Discord ticket for a member" => the channel is created here, same as the panel button
  *   Forms             /profile lookup so claim + lossback forms open pre-filled with the Stake username and wallet linked on the site
  *
@@ -76,7 +76,7 @@ async function onDcTicket(client, ev) {
   if (!ch?.send) { bridge().state.dropped++; return; }                    // channel is gone
   if (ev.type === 'ticket.msg') {
     if (d.from !== 'staff' && d.from !== 'user') return;                  // internal notes and system lines stay on the site
-    await ch.send({ content: `🖥️ **${d.name}** (website): ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } });
+    await ch.send({ content: `**${d.name}**: ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } });
   } else if (ev.type === 'ticket.state') {
     if (d.status === 'closed') await ch.send({ content: '🔒 This ticket was closed from the website. A mod can delete the channel with **Close ticket**.', allowedMentions: { parse: [] } });
     else if (d.assigned_name) await ch.send({ content: `🙋 **${d.assigned_name}** is handling this ticket (from the website).`, allowedMentions: { parse: [] } });
@@ -101,7 +101,7 @@ async function onDcOpen(client, ev, api) {
   const j = await mirrorOpen(channel, member.id, member.user.username, d.category, d.by_name || '', d.req);
   if (!j?.ok) return fail(j?.error || 'The site could not register the ticket.');
   if (d.text) {                                                           // optional first message, shown in the channel and recorded on the site ticket
-    await channel.send({ content: `🖥️ **${d.by_name || 'Staff'}** (website): ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } }).catch(() => {});
+    await channel.send({ content: `**${d.by_name || 'Staff'}**: ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } }).catch(() => {});
     await api('POST', { action: 'dc_ticket_msg', channel_id: channel.id, author_id: d.by, author_name: d.by_name || 'Staff', staff: true, text: d.text }).catch(() => {});
   }
 }
