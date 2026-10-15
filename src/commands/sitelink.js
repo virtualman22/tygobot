@@ -27,6 +27,7 @@ async function execute(interaction) {
         { name: 'Site tickets channel', value: ch(bridge.ticketChannelId()), inline: true },
         { name: 'Handled / dropped', value: `${st.handled} / ${st.dropped}`, inline: true },
         { name: 'Tickets mirrored', value: String(open), inline: true },
+        { name: 'Discord tickets on the site', value: process.env.ENABLE_PRIVILEGED_INTENTS === 'true' ? '✅ messages in ticket channels are mirrored both ways' : '⚠️ opening/closing is mirrored, but I can\'t read the messages: set ENABLE_PRIVILEGED_INTENTS=true (and enable Message Content Intent in the Developer Portal)', inline: false },
         { name: 'Payout records on site', value: sync.error ? `🔴 ${sync.error}` : sync.last ? `✅ ${sync.total} records, last sync ${ago(sync.last)}` : '🟡 first sync pending', inline: false },
       )] }));
   }

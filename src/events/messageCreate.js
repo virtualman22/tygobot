@@ -39,6 +39,9 @@ module.exports = {
       return;
     }
 
+    // Ticket channels are mirrored on the website (what members and staff write here shows there)
+    if (String(message.channel?.topic ?? '').startsWith('ticket:')) require('../siteTickets').mirrorMessage(message).catch(e => console.warn('[site tickets] mirror failed:', e.message));
+
     // XP: 15-25 per message, once a minute
     if (!s.xp_enabled) return;
     const now = Date.now();

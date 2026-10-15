@@ -141,11 +141,15 @@ const buttons = {
     if (mine) return interaction.reply(eph({ content: '✅ You already have a lossback submission waiting for staff. You can submit again once it has been paid.' }));
 
     const code = getSettings(g).lossback_code;
-    const input = (id, label, ph, max) => new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId(id).setLabel(truncate(label, 45)).setPlaceholder(ph).setStyle(TextInputStyle.Short).setMaxLength(max).setRequired(true));
+    const prof = await require('../siteTickets').profileOf(interaction.user.id);        // Stake username + wallet linked on the website (empty if none / site slow)
+    const input = (id, label, ph, max, value) => {
+      const t = new TextInputBuilder().setCustomId(id).setLabel(truncate(label, 45)).setPlaceholder(ph).setStyle(TextInputStyle.Short).setMaxLength(max).setRequired(true);
+      if (value) t.setValue(String(value).slice(0, max));
+      return new ActionRowBuilder().addComponents(t);
+    };
     return interaction.showModal(new ModalBuilder().setCustomId('lbform').setTitle('Lossback').addComponents(
-      input('username', code ? `Username under code ${code}` : 'Your username', 'Your exact username', 80),
-      input('address', 'USDT ETH address', '0x… (USDT on Ethereum / ERC-20) — double check it', 60),
+      input('username', code ? `Username under code ${code}` : 'Your username', 'Your exact username', 80, prof?.stake_username),
+      input('address', 'USDT ETH address', '0x… (USDT on Ethereum / ERC-20) — double check it', 60, prof?.eth_address),
     ));
   },
 };

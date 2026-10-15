@@ -35,12 +35,12 @@ const noPing = { parse: [] };
 const medals = ['🥇', '🥈', '🥉'];
 
 // ───────────── talking to the site ─────────────
-async function api(method, body, query = '') {
+async function api(method, body, query = '', timeoutMs = 10_000) {
   const res = await fetch(`${SITE}/api_bridge.php${query}`, {
     method,
     headers: { Authorization: `Bearer ${SECRET}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const j = await res.json().catch(() => null);
   if (!j) throw new Error(`the site answered HTTP ${res.status} (not JSON). Check SITE_URL.`);
@@ -160,6 +160,7 @@ function cardButtons(i, id) {
 
 async function onTicket(ev) {
   const d = ev.data;
+  if (d.dc_channel) return require('./siteTickets').onDcTicket(clientRef, ev);     // a Discord ticket channel mirrored on the site: talk in that channel, no thread
 
   if (ev.type === 'ticket.created') {
     const ch = await channelOf(ticketChannelId());
@@ -233,6 +234,7 @@ function warn(msg) {
 }
 
 async function handle(ev) {
+  if (ev.type === 'ticket.dc_open') return require('./siteTickets').onDcOpen(clientRef, ev, api);
   if (ev.type === 'record.cmd') { const k = await require('./siteCmd').handle(clientRef, ev, api); if (k.length) cmdTouched = true; return; }
   if (ev.type.startsWith('gtb.')) return onGtb(ev);
   if (ev.type.startsWith('ticket.')) return onTicket(ev);

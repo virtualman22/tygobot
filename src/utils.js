@@ -11,6 +11,14 @@ function isMod(interaction) {
   return Boolean(mod_role && member.roles?.cache?.has(mod_role));
 }
 
+/** Same rule as isMod(), for a guild member (used for message authors, where there is no interaction). */
+function isStaffMember(member, guildId) {
+  if (!member?.permissions) return false;
+  if (member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return true;
+  const { mod_role } = getSettings(guildId);
+  return Boolean(mod_role && member.roles?.cache?.has(mod_role));
+}
+
 /** Replies with an error and returns false when the user is not a mod. */
 function requireMod(interaction) {
   if (isMod(interaction)) return true;
@@ -82,6 +90,6 @@ async function logToGuild(client, guildId, content) {
 }
 
 module.exports = {
-  eph, isMod, requireMod, truncate, ts, parseColor, parseDuration, parseWhen,
+  eph, isMod, isStaffMember, requireMod, truncate, ts, parseColor, parseDuration, parseWhen,
   nextRun, shuffle, levelFromXp, xpForLevel, logToGuild,
 };

@@ -244,6 +244,38 @@ async function attachScreenshot(client, claim, url) {
   await refreshCard(client, row);
 }
 
+/** Creates a member's private ticket channel (button on the panel, or opened by staff from the website). Returns { channel } or { existing }. */
+async function openTicketChannel(client, guild, userId, username, cat) {
+  const c = CATEGORIES[cat];
+  if (!c) throw new Error('Unknown ticket type.');
+  const existing = guild.channels.cache.find(ch => ch.topic === `ticket:${userId}:${cat}`);
+  if (existing) return { existing };
+  const s = getSettings(guild.id);
+  const me = client.user.id;
+  const overwrites = [
+    { id: guild.id, deny: [P.ViewChannel] },
+    { id: userId, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles] },
+    { id: me, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageChannels, P.AttachFiles] },
+  ];
+  if (s.mod_role) overwrites.push({ id: s.mod_role, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageMessages] });
+  const name = `${c.channel}-${String(username || userId).toLowerCase().replace(/[^a-z0-9_-]/g, '')}`.slice(0, 90);
+  const parent = await ticketParent(guild, c, s);
+  const ch = await guild.channels.create({ name, type: ChannelType.GuildText, parent: parent.id, topic: `ticket:${userId}:${cat}`, permissionOverwrites: overwrites });
+  const buttonsRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('tk:claim').setLabel('Claim').setStyle(ButtonStyle.Success),
+    ...(c.claim ? [new ButtonBuilder().setCustomId(`tk:details:${cat}`).setLabel('Submit claim details').setEmoji('📝').setStyle(ButtonStyle.Primary)] : []),
+    new ButtonBuilder().setCustomId('tk:close').setLabel('Close ticket (staff)').setStyle(ButtonStyle.Danger),
+  );
+  await ch.send({
+    content: `<@${userId}>${s.mod_role ? ` <@&${s.mod_role}>` : ''}`,
+    embeds: [new EmbedBuilder().setColor('#9146FF').setTitle(`${c.emoji} ${c.label}`).setDescription(`${c.help}\n\nA staff member will be with you soon.`)],
+    components: [buttonsRow],
+    allowedMentions: { users: [userId], roles: s.mod_role ? [s.mod_role] : [] },
+  });
+  await logToGuild(client, guild.id, `🎫 **${c.label}** ticket opened for <@${userId}>: ${ch}`);
+  return { channel: ch };
+}
+
 // ---------- buttons ----------
 
 const buttons = {
@@ -255,41 +287,12 @@ const buttons = {
       const c = CATEGORIES[cat];
       if (!c) return interaction.reply(eph({ content: '❌ Unknown ticket type.' }));
 
-      const existing = guild.channels.cache.find(ch => ch.topic === `ticket:${interaction.user.id}:${cat}`);
-      if (existing) return interaction.reply(eph({ content: `You already have an open **${c.label}** ticket: ${existing}` }));
-
-      const s = getSettings(guild.id);
-      const me = interaction.client.user.id;
-      const overwrites = [
-        { id: guild.id, deny: [P.ViewChannel] },
-        { id: interaction.user.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles] },
-        { id: me, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageChannels, P.AttachFiles] },
-      ];
-      if (s.mod_role) overwrites.push({ id: s.mod_role, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageMessages] });
-
-      try {
-        const name = `${c.channel}-${interaction.user.username.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`.slice(0, 90);
-        const parent = await ticketParent(guild, c, s);
-        const ch = await guild.channels.create({
-          name, type: ChannelType.GuildText, parent: parent.id,
-          topic: `ticket:${interaction.user.id}:${cat}`, permissionOverwrites: overwrites,
-        });
-        const buttonsRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('tk:claim').setLabel('Claim').setStyle(ButtonStyle.Success),
-          ...(c.claim ? [new ButtonBuilder().setCustomId(`tk:details:${cat}`).setLabel('Submit claim details').setEmoji('📝').setStyle(ButtonStyle.Primary)] : []),
-          new ButtonBuilder().setCustomId('tk:close').setLabel('Close ticket (staff)').setStyle(ButtonStyle.Danger),
-        );
-        await ch.send({
-          content: `<@${interaction.user.id}>${s.mod_role ? ` <@&${s.mod_role}>` : ''}`,
-          embeds: [new EmbedBuilder().setColor('#9146FF').setTitle(`${c.emoji} ${c.label}`).setDescription(`${c.help}\n\nA staff member will be with you soon.`)],
-          components: [buttonsRow],
-          allowedMentions: { users: [interaction.user.id], roles: s.mod_role ? [s.mod_role] : [] },
-        });
-        await logToGuild(interaction.client, guild.id, `🎫 **${c.label}** ticket opened by <@${interaction.user.id}>: ${ch}`);
-        return interaction.reply(eph({ content: `✅ Your ticket is ready: ${ch}` }));
-      } catch (e) {
-        return interaction.reply(eph({ content: `❌ Couldn't create the ticket (I need the Manage Channels permission): ${e.message}` }));
-      }
+      let r;
+      try { r = await openTicketChannel(interaction.client, guild, interaction.user.id, interaction.user.username, cat); }
+      catch (e) { return interaction.reply(eph({ content: `❌ Couldn't create the ticket (I need the Manage Channels permission): ${e.message}` })); }
+      if (r.existing) return interaction.reply(eph({ content: `You already have an open **${c.label}** ticket: ${r.existing}` }));
+      require('../siteTickets').mirrorOpen(r.channel, interaction.user.id, interaction.user.username, cat).catch(() => {});   // shows on the website too
+      return interaction.reply(eph({ content: `✅ Your ticket is ready: ${r.channel}` }));
     }
 
     if (action === 'claim') {
@@ -308,7 +311,8 @@ const buttons = {
       if (!cardDestination(guild.id)) {
         return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet. Please ask a mod to run `/setup set claims_channel`.' }));
       }
-      return interaction.showModal(claimModal(key, 0));
+      const prof = await require('../siteTickets').profileOf(info ? info.userId : interaction.user.id);   // Stake username + wallet linked on the website
+      return interaction.showModal(claimModal(key, 0, { stake_user: prof?.stake_username, address: prof?.eth_address }));
     }
 
     if (action === 'edit') {
@@ -350,6 +354,7 @@ const buttons = {
       if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only staff can close tickets.' }));
       if (!ticketInfo(interaction.channel.topic)) return interaction.reply(eph({ content: '❌ This isn\'t a ticket channel.' }));
       await interaction.reply('🔒 Closing this ticket in 5 seconds…');
+      require('../siteTickets').mirrorState(interaction.channel.id, true, interaction.user.username).catch(() => {});
       await logToGuild(interaction.client, guild.id, `🎫 Ticket **${interaction.channel.name}** closed by <@${interaction.user.id}>.`);
       setTimeout(() => interaction.channel.delete().catch(() => {}), 5000);
     }
@@ -441,4 +446,4 @@ const modals = {
   },
 };
 
-module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, dqClaim, createClaim, refreshCard, claimNotes, refreshOpenCards };
+module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, dqClaim, createClaim, refreshCard, claimNotes, refreshOpenCards, openTicketChannel };
