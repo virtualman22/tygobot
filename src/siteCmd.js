@@ -144,7 +144,20 @@ async function add(client, d, by) {
     key = `claim:${id}`;
   } else if (kind === 'lossback') {
     const l = getSettings(g).lossback_list_id;
-    const list = l && db.prepare('SELECT * FROM lists WHERE id = ?').get(l);
+    const active = l && db.prepare('SELECT * FROM lists WHERE id = ?').get(l);
+    const group = clean(d.group, 100);
+    // the list picked on the website (newest one with that title); a new name starts a new list next to the active one
+    let list = group ? db.prepare(`SELECT * FROM lists WHERE guild_id = ? AND kind = 'lossback' AND title = ? ORDER BY id DESC LIMIT 1`).get(g, group) : active;
+    if (!list && group) {
+      if (!active) throw new Error(`There is no lossback list called "${group}" and no active list to put a new one next to (/lossback).`);
+      const { createList, getList } = require('./commands/list');
+      const ch = await client.channels.fetch(active.channel_id).catch(() => null);
+      if (!ch) throw new Error('I could not open the channel of the active lossback list to start a new one.');
+      const id = await createList(ch, { guildId: g, userId: by || null, kind: 'lossback', title: group,
+        description: active.description, col1: active.col1, col2: active.col2, col3: active.col3 });
+      list = getList(id);
+      await logToGuild(client, g, `💸 <@${by}> started lossback list **${group}** from the website (the active list did not change).`);
+    }
     if (!list) throw new Error('There is no active lossback list in Discord yet (/lossback), so I could not add it there.');
     const res = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id) VALUES (?, ?, ?, ?, ?)').run(list.id, name, address || null, amount, uid || null);
     key = `lossback:${Number(res.lastInsertRowid)}`;
