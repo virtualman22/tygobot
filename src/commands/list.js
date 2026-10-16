@@ -4,6 +4,7 @@ const {
 } = require('discord.js');
 const { db } = require('../db');
 const { eph, isMod, requireMod, truncate, logToGuild } = require('../utils');
+const { siteTag } = require('../sites');
 
 const PAGE_SIZE = 20;      // entries per page (lossback lists use 15: two lines per entry)
 const isLB = l => l.kind === 'lossback';
@@ -42,7 +43,7 @@ function lossbackRows(l, rows, offset) {
   return rows.map((r, i) => {
     const loss = r.value2 ? `**${truncate(r.value2.replace(/\*/g, ''), 40)}**` : '*loss not added yet*';
     const addr = r.value1 ? `\n└ \`${r.value1.replace(/`/g, '')}\`` : '';
-    return `${r.dq ? '🚫' : r.paid ? '✅' : '⬜'} **${offset + i + 1}.** ${truncate(r.name.replace(/\*/g, ''), 40)} — ${l.col3 ?? 'Loss'}: ${loss}${addr}`;
+    return `${r.dq ? '🚫' : r.paid ? '✅' : '⬜'} **${offset + i + 1}.** ${siteTag(r.site)} · ${truncate(r.name.replace(/\*/g, ''), 40)} — ${l.col3 ?? 'Loss'}: ${loss}${addr}`;
   }).join('\n');
 }
 

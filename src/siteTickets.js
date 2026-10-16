@@ -21,14 +21,14 @@ const gid = client => process.env.GUILD_ID || client?.guilds?.cache?.first()?.id
 
 // ───────────── forms: autofill from the site profile ─────────────
 const profiles = new Map();
-/** Stake username / Kick name / wallet the member linked on the website. Never slows a form by more than 1.5 s; null if unknown. */
+/** Stake / Moon username, Kick name and wallet the member linked on the website. Never slows a form by more than 1.5 s; null if unknown. */
 async function profileOf(userId) {
   if (!enabled() || !userId) return null;
   const hit = profiles.get(userId);
   if (hit && Date.now() - hit.at < 60_000) return hit.p;
   try {
     const j = await bridge().api('POST', { action: 'profile', discord_id: String(userId) }, '', 1500);
-    const p = j.ok && j.found ? { stake_username: j.stake_username || '', kick_username: j.kick_username || '', eth_address: j.eth_address || '' } : null;
+    const p = j.ok && j.found ? { stake_username: j.stake_username || '', moon_username: j.moon_username || '', kick_username: j.kick_username || '', eth_address: j.eth_address || '' } : null;
     profiles.set(userId, { at: Date.now(), p });
     if (profiles.size > 500) profiles.delete(profiles.keys().next().value);
     return p;

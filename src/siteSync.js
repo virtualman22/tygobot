@@ -13,6 +13,7 @@
 const crypto = require('crypto');
 const { db } = require('./db');
 require('./siteCmd');                       // makes sure the site_meta table exists
+const { siteOf, guessSite } = require('./sites');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS site_sync (key TEXT PRIMARY KEY, hash TEXT, paid_seen_at INTEGER, paid_approx INTEGER DEFAULT 0);
@@ -52,7 +53,7 @@ function build() {
   for (const c of claims) {
     const dq = Boolean(c.disqualified);
     out.push({
-      key: `claim:${c.id}`, kind: KIND[c.category] ?? 'other', status: dq ? 'cancelled' : c.paid ? 'paid' : 'pending',
+      key: `claim:${c.id}`, kind: KIND[c.category] ?? 'other', site: siteOf(c.site), status: dq ? 'cancelled' : c.paid ? 'paid' : 'pending',
       user_id: c.user_id, discord_name: nameOf(c.user_id), user: c.stake_user, stake: c.stake_user,
       what: c.what, amount_text: c.amount, address: c.address, proof: c.screenshot,
       created_at: sec(c.r_created), paid_at: c.paid ? sec(c.paid_at) : null, paid_by: c.paid ? (nameOf(c.paid_by) || c.paid_by) : '',
@@ -64,7 +65,7 @@ function build() {
     if (linked.has(r.id)) continue;
     const st = String(r.status || 'Pending').toLowerCase();
     out.push({
-      key: `reward:${r.id}`, kind: 'other', status: st === 'paid' ? 'paid' : st === 'cancelled' ? 'cancelled' : 'pending',
+      key: `reward:${r.id}`, kind: 'other', site: r.site ? siteOf(r.site) : guessSite(`${r.label} ${r.notes ?? ''}`), status: st === 'paid' ? 'paid' : st === 'cancelled' ? 'cancelled' : 'pending',
       user: r.username, what: r.label, amount_text: r.reward, note: r.notes,
       created_at: sec(r.created_at), paid_at: st === 'paid' ? sec(r.updated_at) : null, paid_by: '',
     });
@@ -82,7 +83,7 @@ function build() {
       else { paidAt = sec(e.l_created); approx = 1; }                                  // old entry, already paid before we ever saw it: date = when its list was made
     }
     out.push({
-      key, kind: 'lossback', status: e.dq ? 'cancelled' : paid ? 'paid' : 'pending', note: e.dq ? `Disqualified${e.dq_reason ? ': ' + e.dq_reason : ''}` : '', user_id: e.user_id, discord_name: nameOf(e.user_id), user: e.name,
+      key, kind: 'lossback', site: siteOf(e.site), status: e.dq ? 'cancelled' : paid ? 'paid' : 'pending', note: e.dq ? `Disqualified${e.dq_reason ? ': ' + e.dq_reason : ''}` : '', user_id: e.user_id, discord_name: nameOf(e.user_id), user: e.name,
       what: e.l_title, group: e.l_title, amount_text: e.value2, address: e.value1,
       created_at: sec(e.l_created), paid_at: paidAt, paid_approx: Boolean(approx),
     });

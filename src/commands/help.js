@@ -73,14 +73,14 @@ const PAGES = {
         '**Members:** press a button on the ticket panel. A private channel opens just for you and staff.\n' +
         '🎁 **Giveaway Claim** · 🏆 **Milestones** · 🛠️ **Technical Assistance** · 💰 **Bonuses**\n' +
         'You can have one open ticket per category.\n\n' +
-        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Submit claim details** and fill in what you won (or which milestone you hit), how much, your USDT ETH address and your Stake username. ' +
-        'For milestones, then upload your screenshot in the chat (or use `/screenshot`).\n\n' +
+        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Stake claim** or **Moon claim** (the site the reward is for) and fill in what you won (or which milestone you hit), how much, your **personal** USDT (ETH) wallet and your Stake or Moon username. ' +
+        'Never a Stake or Moon deposit address: use your own wallet. For milestones, then upload your screenshot in the chat (or use `/screenshot`).\n\n' +
         '**Staff 🔒**\n' +
         '`/ticket panel` — post the ticket buttons\n' +
         '`/claimform` — post a claim form button in ANY chat. Submissions go to your claims channel (`/setup set claims_channel`) so addresses stay private.\n' +
         '**Mark as paid** on a claim card updates the rewards tracker, tells the member and renames their ticket to `paid-…`.\n' +
         '**Disqualify** on a claim card (with an optional reason) cancels it, tells the member and lets them submit again. Paid claims can\'t be disqualified.\n' +
-        'Each member can have **one active submission per category** until it is paid or disqualified.\n' +
+        'Each member can have **one active submission per category and site** (Stake / Moon) until it is paid or disqualified.\n' +
         '**Only staff can close tickets.** Close ticket deletes the channel after 5 seconds.',
     }),
   },
@@ -119,9 +119,9 @@ const PAGES = {
     build: () => ({
       title: '💸 Lossback 🔒',
       description:
-        '**Members:** every **Friday only**, they press **Submit lossback** on the panel and enter their username (under your code) and their **USDT ETH** address. The address is checked (must be `0x` + 40 characters). One waiting submission per member until it is paid.\n\n' +
+        '**Members:** every **Friday only**, they press **Stake lossback** or **Moon lossback** on the panel and enter their username (under your code for that site) and their **personal USDT (ETH)** wallet (never a Stake or Moon deposit address). The address is checked (must be `0x` + 40 characters). One waiting submission per member and site until it is paid.\n\n' +
         '**Setup**\n' +
-        '`/lossback config code: timezone:` — your code shown on the form, and the timezone that decides when "Friday" is (default UTC)\n' +
+        '`/lossback config code: moon_code: timezone:` — your Stake and Moon codes shown on the form, and the timezone that decides when "Friday" is (default UTC)\n' +
         '`/lossback panel list_channel:#staff` — posts the panel and creates the staff list the first time (keep that channel staff-only)\n' +
         '`/lossback newlist` — start a fresh empty list, e.g. each week; new submissions go to it\n\n' +
         '**On the list** (columns: Username · USDT ETH Address · Loss)\n' +

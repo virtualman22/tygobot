@@ -4,21 +4,25 @@ const {
 } = require('discord.js');
 const { db, getSettings } = require('../db');
 const { eph, isMod, requireMod, logToGuild, truncate, ts } = require('../utils');
+const { SITES, siteOf, siteLabel, siteTag, ETH_ADDRESS, WALLET_RULE, walletNotice, BAD_ADDRESS, siteButtons } = require('../sites');
 
 const P = PermissionFlagsBits;
 
-// claim: true      -> "Submit claim details" form is available
+const PICK_SITE = 'Press **Stake** or **Moon** below (the site the reward is for) and fill in';
+const WALLET_LINE = `\n\n💳 ${WALLET_RULE}`;
+
+// claim: true      -> "Stake" / "Moon" claim form buttons are available
 // screenshot: true -> member is asked to upload a screenshot
 const CATEGORIES = {
   giveaway: {
     label: 'Giveaway Claim', category: 'Giveaway Claims', emoji: '🎁', style: ButtonStyle.Success, channel: 'giveaway', claim: true,
     whatName: 'What they won', whatLabel: 'What did you win?', whatPh: 'e.g. Weekly giveaway', amountPh: 'e.g. $25 or 0.001 BTC',
-    help: 'Congrats on winning! Press **Submit claim details** below and fill in what you won, the amount, your USDT ETH address and your Stake username.',
+    help: `Congrats on winning! ${PICK_SITE} what you won, the amount, your personal USDT (ETH) wallet and your Stake or Moon username.${WALLET_LINE}`,
   },
   milestone: {
     label: 'Milestones', category: 'Milestones', emoji: '🏆', style: ButtonStyle.Primary, channel: 'milestone', claim: true, screenshot: true,
     whatName: 'Milestone', whatLabel: 'Which milestone did you hit?', whatPh: 'e.g. $10,000 wagered', amountPh: 'Reward amount, e.g. $25',
-    help: 'Press **Submit claim details** below and fill in the milestone you hit, the reward amount, your USDT ETH address and your Stake username.\nThen **upload your screenshot in this chat** (or use `/screenshot`).',
+    help: `${PICK_SITE} the milestone you hit, the reward amount, your personal USDT (ETH) wallet and your Stake or Moon username.\nThen **upload your screenshot in this chat** (or use \`/screenshot\`).${WALLET_LINE}`,
   },
   tech: {
     label: 'Technical Assistance', category: 'Technical Assistance', emoji: '🛠️', style: ButtonStyle.Secondary, channel: 'support', claim: false,
@@ -27,9 +31,12 @@ const CATEGORIES = {
   bonus: {
     label: 'Bonuses', category: 'Bonuses', emoji: '💰', style: ButtonStyle.Primary, channel: 'bonus', claim: true,
     whatName: 'Bonus', whatLabel: 'Which bonus is this for?', whatPh: 'e.g. Weekly reload bonus', amountPh: 'e.g. $25 or 0.001 BTC',
-    help: 'Press **Submit claim details** below and fill in which bonus it is, the amount, your USDT ETH address and your Stake username.',
+    help: `${PICK_SITE} which bonus it is, the amount, your personal USDT (ETH) wallet and your Stake or Moon username.${WALLET_LINE}`,
   },
 };
+
+/** The two claim-form buttons (Stake / Moon) for a category. */
+const claimButtons = cat => siteButtons(s => `tk:details:${cat}:${s}`, s => `${SITES[s].label} claim`).components;
 const SCREENSHOT_CATEGORIES = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].screenshot);
 
 const data = new SlashCommandBuilder()
@@ -88,20 +95,24 @@ async function ticketParent(guild, c, s) {
 
 // ---------- claim form ----------
 
-function claimModal(cat, claimId, v = {}) {
+/** The claim form. `stake_user` holds the username on whichever site the claim is for (Stake or Moon). */
+function claimModal(cat, claimId, site, v = {}) {
   const c = CATEGORIES[cat];
+  const s = SITES[siteOf(site)];
   const f = (id, label, ph, max) => {
     const t = new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(ph)
       .setStyle(TextInputStyle.Short).setMaxLength(max).setRequired(true);
     if (v[id]) t.setValue(String(v[id]).slice(0, max));
     return new ActionRowBuilder().addComponents(t);
   };
-  return new ModalBuilder().setCustomId(`tkclaim:${cat}:${claimId}`).setTitle(`${c.label} — details`).addComponents(
-    f('what', c.whatLabel, c.whatPh, 150),
-    f('amount', 'How much?', c.amountPh, 60),
-    f('address', 'USDT ETH address', 'USDT on Ethereum (ERC-20) — double check, payments can\'t be reversed', 200),
-    f('stake_user', 'Stake username', 'Your exact Stake username', 80),
-  );
+  return new ModalBuilder().setCustomId(`tkclaim:${cat}:${claimId}:${siteOf(site)}`).setTitle(truncate(`${s.label} — ${c.label}`, 45))
+    .addTextDisplayComponents(walletNotice())
+    .addComponents(
+      f('what', c.whatLabel, c.whatPh, 150),
+      f('amount', 'How much?', c.amountPh, 60),
+      f('address', 'Your PERSONAL USDT (ETH) wallet', `0x… your own wallet. NOT a Stake or Moon deposit address`, 60),
+      f('stake_user', `${s.label} username`, `Your exact ${s.label} username`, 80),
+    );
 }
 
 function claimEmbed(row) {
@@ -110,12 +121,13 @@ function claimEmbed(row) {
   const dq = Boolean(row.disqualified);
   const fields = [
     { name: c.whatName, value: truncate(row.what, 1024) },
+    { name: 'Site', value: siteTag(row.site), inline: true },
     { name: 'How much', value: truncate(row.amount, 1024), inline: true },
-    { name: 'Stake username', value: truncate(row.stake_user, 1024), inline: true },
+    { name: `${siteLabel(row.site)} username`, value: truncate(row.stake_user, 1024), inline: true },
     { name: 'Member', value: row.user_id && row.user_id !== '0' ? `<@${row.user_id}>` : '—', inline: true },
   ];
   if (row.channel_id !== row.card_channel_id && /^\d+$/.test(row.channel_id) && row.channel_id !== '0') fields.push({ name: 'Submitted in', value: `<#${row.channel_id}>`, inline: true });
-  fields.push({ name: 'USDT ETH address', value: `\`\`\`${String(row.address || '—').replace(/`/g, '')}\`\`\`` });
+  fields.push({ name: 'Personal USDT (ETH) wallet', value: `\`\`\`${String(row.address || '—').replace(/`/g, '')}\`\`\`` });
   if (c.screenshot) {
     fields.push({
       name: 'Screenshot',
@@ -129,7 +141,7 @@ function claimEmbed(row) {
       : paid ? `✅ **Paid** by <@${row.paid_by}> ${ts(row.paid_at, 'R')}` : '⏳ Waiting for payment',
   });
   return new EmbedBuilder().setColor(dq ? '#E74C3C' : paid ? '#2ECC71' : '#F1C40F')
-    .setTitle(`${c.emoji} ${c.label} — claim details`).addFields(fields)
+    .setTitle(`${c.emoji} ${siteLabel(row.site)} · ${c.label} — claim details`).addFields(fields)
     .setFooter({ text: `Rewards tracker entry #${row.reward_id}` });
 }
 
@@ -143,7 +155,10 @@ const claimRow = (paid, dq = false) => new ActionRowBuilder().addComponents(
 );
 
 const claimNotes = (r) =>
-  `USDT ETH address: ${r.address}\nDiscord: <@${r.user_id}>\nSubmitted in: <#${r.channel_id}>${r.screenshot ? `\nScreenshot: ${r.screenshot}` : ''}`;
+  `Site: ${siteLabel(r.site)}\nPersonal USDT ETH wallet: ${r.address}\nDiscord: <@${r.user_id}>\nSubmitted in: <#${r.channel_id}>${r.screenshot ? `\nScreenshot: ${r.screenshot}` : ''}`;
+
+/** Rewards tracker label: one per category AND site, so /rewards keeps Stake and Moon apart. */
+const rewardLabel = (cat, site) => `${CATEGORIES[cat].label} · ${siteLabel(site)}`;
 
 async function refreshCard(client, row) {
   try {
@@ -179,7 +194,7 @@ async function payClaim(client, claim, userId) {
     origin.setName(`paid-${rest}`.slice(0, 100)).catch(() => {});
   }
 
-  await logToGuild(client, claim.guild_id, `💸 <@${userId}> marked **${claim.amount}** (${claim.stake_user}) as paid. Rewards entry #${claim.reward_id}.`);
+  await logToGuild(client, claim.guild_id, `💸 <@${userId}> marked **${claim.amount}** (${siteLabel(claim.site)}: ${claim.stake_user}) as paid. Rewards entry #${claim.reward_id}.`);
   return { fresh, notified };
 }
 
@@ -194,28 +209,28 @@ async function dqClaim(client, row, userId, reason = '') {
   try {
     const origin = await client.channels.fetch(row.channel_id);
     await origin.send({
-      content: `🚫 ${row.user_id && row.user_id !== '0' ? `<@${row.user_id}>` : row.stake_user} your **${CATEGORIES[row.category].label}** claim (**${row.amount}**) was disqualified by staff.${reason ? `\n**Reason:** ${reason}` : ''}`,
+      content: `🚫 ${row.user_id && row.user_id !== '0' ? `<@${row.user_id}>` : row.stake_user} your **${siteLabel(row.site)} ${CATEGORIES[row.category].label}** claim (**${row.amount}**) was disqualified by staff.${reason ? `\n**Reason:** ${reason}` : ''}`,
       allowedMentions: { users: [row.user_id] },
     });
     notified = true;
   } catch { /* channel deleted or no access */ }
 
-  await logToGuild(client, row.guild_id, `🚫 <@${userId}> disqualified ${row.stake_user}'s **${row.amount}** claim${reason ? ` (${reason})` : ''}. Rewards entry #${row.reward_id} set to Cancelled.`);
+  await logToGuild(client, row.guild_id, `🚫 <@${userId}> disqualified ${row.stake_user}'s **${row.amount}** ${siteLabel(row.site)} claim${reason ? ` (${reason})` : ''}. Rewards entry #${row.reward_id} set to Cancelled.`);
   return { notified };
 }
 
 /** Registers a claim by hand (the website's "register payout"): rewards entry + claim row + card in the claims channel when one is set. */
-async function createClaim(client, { guildId, userId, cat, what, amount, address, stake }) {
-  const c = CATEGORIES[cat];
+async function createClaim(client, { guildId, userId, cat, what, amount, address, stake, site }) {
+  site = siteOf(site);
   const now = Date.now();
   const destId = cardDestination(guildId);
   const uid = userId || '0';
-  const draft = { guild_id: guildId, channel_id: destId || '0', user_id: uid, category: cat, what, amount, address: address || '', stake_user: stake, card_channel_id: destId, paid: 0, screenshot: null };
-  const rw = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?)`)
-    .run(guildId, c.label, stake, truncate(`${what} (${amount})`, 200), claimNotes(draft), uid, now, now);
+  const draft = { guild_id: guildId, channel_id: destId || '0', user_id: uid, category: cat, site, what, amount, address: address || '', stake_user: stake, card_channel_id: destId, paid: 0, screenshot: null };
+  const rw = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at, site) VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?, ?)`)
+    .run(guildId, rewardLabel(cat, site), stake, truncate(`${what} (${amount})`, 200), claimNotes(draft), uid, now, now, site);
   draft.reward_id = Number(rw.lastInsertRowid);
-  const cr = db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, what, amount, address, stake_user, reward_id, card_channel_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(guildId, draft.channel_id, uid, cat, what, amount, draft.address, stake, draft.reward_id, destId);
+  const cr = db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, site, what, amount, address, stake_user, reward_id, card_channel_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(guildId, draft.channel_id, uid, cat, site, what, amount, draft.address, stake, draft.reward_id, destId);
   const id = Number(cr.lastInsertRowid);
   if (destId) {
     try {
@@ -262,8 +277,8 @@ async function openTicketChannel(client, guild, userId, username, cat) {
   const parent = await ticketParent(guild, c, s);
   const ch = await guild.channels.create({ name, type: ChannelType.GuildText, parent: parent.id, topic: `ticket:${userId}:${cat}`, permissionOverwrites: overwrites });
   const buttonsRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('tk:claim').setLabel('Claim').setStyle(ButtonStyle.Success),
-    ...(c.claim ? [new ButtonBuilder().setCustomId(`tk:details:${cat}`).setLabel('Submit claim details').setEmoji('📝').setStyle(ButtonStyle.Primary)] : []),
+    new ButtonBuilder().setCustomId('tk:claim').setLabel('Claim').setStyle(ButtonStyle.Secondary),
+    ...(c.claim ? claimButtons(cat) : []),
     new ButtonBuilder().setCustomId('tk:close').setLabel('Close ticket (staff)').setStyle(ButtonStyle.Danger),
   );
   await ch.send({
@@ -279,7 +294,7 @@ async function openTicketChannel(client, guild, userId, username, cat) {
 // ---------- buttons ----------
 
 const buttons = {
-  async tk(interaction, [action, cat]) {
+  async tk(interaction, [action, cat, site]) {
     const guild = interaction.guild;
     const byCard = () => db.prepare('SELECT * FROM claims WHERE message_id = ?').get(interaction.message.id);
 
@@ -300,10 +315,10 @@ const buttons = {
       return interaction.reply({ content: `🙋 <@${interaction.user.id}> is handling this ticket.`, allowedMentions: { parse: [] } });
     }
 
-    // "Submit claim details": works in tickets and in any chat where a mod posted /claimform
+    // "Stake claim" / "Moon claim": works in tickets and in any chat where a mod posted /claimform
     if (action === 'details') {
       const info = ticketInfo(interaction.channel.topic);
-      const key = cat ?? info?.cat;
+      const key = cat || info?.cat;
       if (!CATEGORIES[key]?.claim) return interaction.reply(eph({ content: '❌ Claim details aren\'t available here.' }));
       if (info && info.userId !== interaction.user.id && !isMod(interaction)) {
         return interaction.reply(eph({ content: '❌ Only the ticket owner or staff can fill this in.' }));
@@ -311,8 +326,12 @@ const buttons = {
       if (!cardDestination(guild.id)) {
         return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet. Please ask a mod to run `/setup set claims_channel`.' }));
       }
-      const prof = await require('../siteTickets').profileOf(info ? info.userId : interaction.user.id);   // Stake username + wallet linked on the website
-      return interaction.showModal(claimModal(key, 0, { stake_user: prof?.stake_username, address: prof?.eth_address }));
+      // Buttons posted before Moon existed have no site: ask which one first
+      if (!SITES[site]) {
+        return interaction.reply(eph({ content: `Which site is this **${CATEGORIES[key].label}** for?`, components: [new ActionRowBuilder().addComponents(claimButtons(key))] }));
+      }
+      const prof = await require('../siteTickets').profileOf(info ? info.userId : interaction.user.id);   // Stake / Moon username + wallet linked on the website
+      return interaction.showModal(claimModal(key, 0, site, { stake_user: site === 'moon' ? prof?.moon_username : prof?.stake_username, address: prof?.eth_address }));
     }
 
     if (action === 'edit') {
@@ -321,7 +340,7 @@ const buttons = {
       if (claim.paid) return interaction.reply(eph({ content: '✅ This claim has already been paid.' }));
       if (claim.disqualified) return interaction.reply(eph({ content: '🚫 This claim was disqualified.' }));
       if (claim.user_id !== interaction.user.id && !isMod(interaction)) return interaction.reply(eph({ content: '❌ Only the member or staff can edit this.' }));
-      return interaction.showModal(claimModal(claim.category, claim.id, claim));
+      return interaction.showModal(claimModal(claim.category, claim.id, claim.site, claim));
     }
 
     if (action === 'paid') {
@@ -364,14 +383,16 @@ const buttons = {
 // ---------- modal ----------
 
 const modals = {
-  async tkclaim(interaction, [cat, claimIdStr]) {
+  async tkclaim(interaction, [cat, claimIdStr, siteStr]) {
     const c = CATEGORIES[cat];
     if (!c?.claim) return interaction.reply(eph({ content: '❌ Unknown claim type.' }));
     const claimId = Number(claimIdStr);
+    const site = siteOf(siteStr);
     const info = ticketInfo(interaction.channel?.topic);
 
     const v = id => interaction.fields.getTextInputValue(id).trim();
     const f = { what: v('what'), amount: v('amount'), address: v('address'), stake_user: v('stake_user') };
+    if (!ETH_ADDRESS.test(f.address)) return interaction.reply(eph({ content: BAD_ADDRESS }));
     const now = Date.now();
 
     // ----- editing an existing claim -----
@@ -397,23 +418,23 @@ const modals = {
     const destId = cardDestination(interaction.guildId);
     if (!destId) return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet (`/setup set claims_channel`).' }));
 
-    // One active submission per member per category: a new one is allowed once the old one is paid or disqualified
-    const active = db.prepare('SELECT id FROM claims WHERE guild_id = ? AND user_id = ? AND category = ? AND paid = 0 AND disqualified = 0 LIMIT 1')
-      .get(interaction.guildId, userId, cat);
+    // One active submission per member per category and site: a new one is allowed once the old one is paid or disqualified
+    const active = db.prepare("SELECT id FROM claims WHERE guild_id = ? AND user_id = ? AND category = ? AND COALESCE(site, 'stake') = ? AND paid = 0 AND disqualified = 0 LIMIT 1")
+      .get(interaction.guildId, userId, cat, site);
     if (active) {
-      return interaction.reply(eph({ content: `❌ ${userId === interaction.user.id ? 'You already have' : 'This member already has'} an active **${c.label}** submission that hasn't been paid yet. `
+      return interaction.reply(eph({ content: `❌ ${userId === interaction.user.id ? 'You already have' : 'This member already has'} an active **${siteLabel(site)} ${c.label}** submission that hasn't been paid yet. `
         + 'Staff are handling it — a new one can be submitted once it is paid or removed. To change the details, ask staff to edit it.' }));
     }
 
-    const draft = { ...f, guild_id: interaction.guildId, channel_id: interaction.channelId, user_id: userId, category: cat, card_channel_id: destId, paid: 0, screenshot: null };
-    const res = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?)`)
-      .run(interaction.guildId, c.label, f.stake_user, truncate(`${f.what} (${f.amount})`, 200), claimNotes(draft), userId, now, now);
+    const draft = { ...f, guild_id: interaction.guildId, channel_id: interaction.channelId, user_id: userId, category: cat, site, card_channel_id: destId, paid: 0, screenshot: null };
+    const res = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at, site)
+                            VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?, ?)`)
+      .run(interaction.guildId, rewardLabel(cat, site), f.stake_user, truncate(`${f.what} (${f.amount})`, 200), claimNotes(draft), userId, now, now, site);
     draft.reward_id = Number(res.lastInsertRowid);
     // Saved before the card is posted, so two quick submissions can't both slip past the check above
-    const claimRes = db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, what, amount, address, stake_user, reward_id, card_channel_id)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(interaction.guildId, interaction.channelId, userId, cat, f.what, f.amount, f.address, f.stake_user, draft.reward_id, destId);
+    const claimRes = db.prepare(`INSERT INTO claims (guild_id, channel_id, user_id, category, site, what, amount, address, stake_user, reward_id, card_channel_id)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(interaction.guildId, interaction.channelId, userId, cat, site, f.what, f.amount, f.address, f.stake_user, draft.reward_id, destId);
     const newClaimId = Number(claimRes.lastInsertRowid);
 
     await interaction.deferReply(eph());
@@ -428,7 +449,7 @@ const modals = {
     }
 
     const shot = c.screenshot ? '\n📎 **Now upload your screenshot in this chat** (or use `/screenshot`).' : '';
-    return interaction.editReply({ content: `✅ Your details were submitted to staff.${shot}` });
+    return interaction.editReply({ content: `✅ Your **${siteLabel(site)}** claim was submitted to staff.${shot}` });
   },
 
   // Staff pressed Disqualify on a claim card and filled in the (optional) reason
@@ -446,4 +467,4 @@ const modals = {
   },
 };
 
-module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, dqClaim, createClaim, refreshCard, claimNotes, refreshOpenCards, openTicketChannel };
+module.exports = { data, execute, buttons, modals, CATEGORIES, SCREENSHOT_CATEGORIES, attachScreenshot, payClaim, dqClaim, createClaim, refreshCard, claimNotes, rewardLabel, claimButtons, refreshOpenCards, openTicketChannel };

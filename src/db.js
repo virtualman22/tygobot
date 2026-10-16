@@ -203,6 +203,12 @@ for (const sql of ['ALTER TABLE lists ADD COLUMN kind TEXT', 'ALTER TABLE list_e
   try { db.exec(sql); } catch { /* already migrated */ }
 }
 
+// Stake / Moon: every claim, lossback entry and reward belongs to one site (old rows count as Stake)
+for (const sql of ["ALTER TABLE claims ADD COLUMN site TEXT DEFAULT 'stake'", "ALTER TABLE list_entries ADD COLUMN site TEXT DEFAULT 'stake'",
+  'ALTER TABLE rewards ADD COLUMN site TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code_moon TEXT']) {
+  try { db.exec(sql); } catch { /* already migrated */ }
+}
+
 // Migration: templates keep a JSON blob so they can hold any announcement style
 try { db.exec('ALTER TABLE templates ADD COLUMN fields TEXT'); } catch { /* already migrated */ }
 
@@ -210,7 +216,7 @@ const SETTING_COLUMNS = [
   'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'welcome_channel', 'welcome_message',
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
-  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code',
+  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_code_moon',
 ];
 
 function getSettings(guildId) {

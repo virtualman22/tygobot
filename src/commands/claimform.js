@@ -1,13 +1,14 @@
-const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, ActionRowBuilder } = require('discord.js');
 const { getSettings } = require('../db');
 const { eph, requireMod } = require('../utils');
-const { CATEGORIES } = require('./ticket');
+const { CATEGORIES, claimButtons } = require('./ticket');
+const { WALLET_RULE } = require('../sites');
 
 const claimTypes = Object.entries(CATEGORIES).filter(([, c]) => c.claim);
 
 const data = new SlashCommandBuilder()
   .setName('claimform')
-  .setDescription('Post a "Submit claim details" button in any chat')
+  .setDescription('Post the claim form buttons (Stake / Moon) in any chat')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
   .addStringOption(o => o.setName('type').setDescription('What kind of claim').setRequired(true)
     .addChoices(...claimTypes.map(([value, c]) => ({ name: c.label, value }))))
@@ -29,10 +30,9 @@ async function execute(interaction) {
   try {
     await target.send({
       embeds: [new EmbedBuilder().setColor('#9146FF').setTitle(`${c.emoji} ${c.label}`)
-        .setDescription(interaction.options.getString('message')
-          ?? `Press the button below and fill in your details. ${c.screenshot ? 'You\'ll also be asked to upload a screenshot. ' : ''}Only staff can see what you submit.`)],
-      components: [new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`tk:details:${key}`).setLabel('Submit claim details').setEmoji('📝').setStyle(ButtonStyle.Primary))],
+        .setDescription(`${interaction.options.getString('message')
+          ?? `Press **Stake claim** or **Moon claim** (the site your reward is for) and fill in your details. ${c.screenshot ? 'You\'ll also be asked to upload a screenshot. ' : ''}Only staff can see what you submit.`}\n\n💳 ${WALLET_RULE}`)],
+      components: [new ActionRowBuilder().addComponents(claimButtons(key))],
     });
   } catch (e) {
     return interaction.reply(eph({ content: `❌ Couldn't post there: ${e.message}` }));

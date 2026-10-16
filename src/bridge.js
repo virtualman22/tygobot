@@ -135,7 +135,9 @@ function cardEmbed(i) {
     .setTitle(`🎫 #${i.num} · ${clip(i.category_label, 60)}`)
     .addFields(
       { name: 'Member', value: `<@${i.uid}> (${clip(i.name, 40)})`, inline: true },
+      ...(i.site ? [{ name: 'For', value: i.site === 'moon' ? '🌙 Moon' : '🟢 Stake', inline: true }] : []),
       { name: 'Stake', value: clip(i.stake, 60) || '*not linked*', inline: true },
+      ...(i.moon ? [{ name: 'Moon', value: clip(i.moon, 60), inline: true }] : []),
       { name: 'Kick', value: clip(i.kick, 60) || '*not linked*', inline: true },
       { name: 'Status', value: closed ? '🔒 Closed' : i.assigned_name ? `🟣 In progress — ${clip(i.assigned_name, 40)}` : '🟡 Unclaimed', inline: true },
     )
@@ -166,7 +168,7 @@ async function onTicket(ev) {
     const ch = await channelOf(ticketChannelId());
     if (!ch?.threads) { state.dropped++; warn('Ticket event skipped: no site-tickets channel set. Use /setup set site_tickets_channel:#staff-channel'); return; }
     let row = ticketRow(d.ticket_id);
-    const info = { num: d.num, uid: d.uid, name: d.name, stake: d.stake, kick: d.kick, category_label: d.category_label, giveaway: d.giveaway, status: 'open', assigned_name: null, pending: 0 };
+    const info = { num: d.num, uid: d.uid, name: d.name, stake: d.stake, moon: d.moon, site: d.site, kick: d.kick, category_label: d.category_label, giveaway: d.giveaway, status: 'open', assigned_name: null, pending: 0 };
     if (!row) {
       const mod = cfg().mod_role;
       const card = await ch.send({

@@ -5,7 +5,7 @@
  *   pay      mark a claim / reward / lossback as paid        (claims: card updated, member told, ticket renamed — same as the button)
  *   dq       disqualify                                        (claims: card + member told; rewards: Cancelled; lossbacks: 🚫 and the member can submit again)
  *   delete   remove it from the bot (claim row + rewards entry + card message, or the lossback list entry)
- *   edit     amount / category / source / note
+ *   edit     amount / category / site (Stake or Moon) / source / note
  *   add      register one by hand for a member (claim + card, lossback list entry, or a rewards-tracker entry)
  *
  * Afterwards the record is sent back to the site straight away (siteSync), which clears the "syncing" mark there.
@@ -13,6 +13,7 @@
  */
 const { db, getSettings } = require('./db');
 const { logToGuild } = require('./utils');
+const { SITES, siteOf, siteLabel } = require('./sites');
 
 db.exec(`CREATE TABLE IF NOT EXISTS site_meta (key TEXT PRIMARY KEY, tmp TEXT, origin TEXT, note TEXT);`);
 
@@ -105,24 +106,28 @@ async function del(client, p, by) {
 }
 
 async function edit(client, p, d) {
-  const { refreshCard, claimNotes, CATEGORIES } = require('./commands/ticket');
+  const { refreshCard, claimNotes, rewardLabel, CATEGORIES } = require('./commands/ticket');
   const amount = clean(d.amount_text, 100);
   const kind = String(d.kind || '');
+  const site = SITES[d.site] ? String(d.site) : null;              // null = leave the site as it is
   if (p.type === 'claim') {
     const c = db.prepare('SELECT * FROM claims WHERE id = ?').get(p.id);
     if (!c) throw new Error('That claim no longer exists in the bot.');
     const cat = CATEGORIES[kind]?.claim ? kind : c.category;       // lossback / other can't be a claim type: those stay site-side
-    db.prepare('UPDATE claims SET amount = ?, category = ? WHERE id = ?').run(amount || c.amount, cat, c.id);
+    db.prepare('UPDATE claims SET amount = ?, category = ?, site = ? WHERE id = ?').run(amount || c.amount, cat, site ?? siteOf(c.site), c.id);
     const fresh = db.prepare('SELECT * FROM claims WHERE id = ?').get(c.id);
-    if (c.reward_id) db.prepare('UPDATE rewards SET label = ?, reward = ?, notes = ?, updated_at = ? WHERE id = ?')
-      .run(CATEGORIES[cat].label, `${fresh.what} (${fresh.amount})`.slice(0, 200), claimNotes(fresh), Date.now(), c.reward_id);
+    if (c.reward_id) db.prepare('UPDATE rewards SET label = ?, reward = ?, notes = ?, site = ?, updated_at = ? WHERE id = ?')
+      .run(rewardLabel(cat, fresh.site), `${fresh.what} (${fresh.amount})`.slice(0, 200), claimNotes(fresh), siteOf(fresh.site), Date.now(), c.reward_id);
     await refreshCard(client, fresh);
   } else if (p.type === 'reward') {
     if (amount) db.prepare('UPDATE rewards SET reward = ?, updated_at = ? WHERE id = ?').run(amount, Date.now(), p.id);
+    if (site) db.prepare('UPDATE rewards SET site = ?, updated_at = ? WHERE id = ?').run(site, Date.now(), p.id);
   } else {
     const e = db.prepare('SELECT * FROM list_entries WHERE id = ?').get(p.id);
     if (!e) throw new Error('That lossback entry no longer exists in the bot.');
-    if (amount) { db.prepare('UPDATE list_entries SET value2 = ? WHERE id = ?').run(amount, e.id); await require('./commands/list').refreshMessage(client, e.list_id); }
+    if (amount) db.prepare('UPDATE list_entries SET value2 = ? WHERE id = ?').run(amount, e.id);
+    if (site) db.prepare('UPDATE list_entries SET site = ? WHERE id = ?').run(site, e.id);
+    if (amount || site) await require('./commands/list').refreshMessage(client, e.list_id);
   }
   const origin = ORIGINS.has(String(d.origin ?? '')) ? String(d.origin ?? '') : '';
   setMeta(`${p.type}:${p.id}`, { origin, note: clean(d.note, 200) });
@@ -137,10 +142,11 @@ async function add(client, d, by) {
   const what = clean(d.what, 200);
   const amount = clean(d.amount_text, 100);
   const address = clean(d.address, 120);
+  const site = siteOf(d.site);
   let key;
   if (['giveaway', 'bonus', 'milestone'].includes(kind)) {
     const { createClaim } = require('./commands/ticket');
-    const { id } = await createClaim(client, { guildId: g, userId: uid, cat: kind, what, amount, address, stake: name });
+    const { id } = await createClaim(client, { guildId: g, userId: uid, cat: kind, what, amount, address, stake: name, site });
     key = `claim:${id}`;
   } else if (kind === 'lossback') {
     const l = getSettings(g).lossback_list_id;
@@ -159,17 +165,17 @@ async function add(client, d, by) {
       await logToGuild(client, g, `💸 <@${by}> started lossback list **${group}** from the website (the active list did not change).`);
     }
     if (!list) throw new Error('There is no active lossback list in Discord yet (/lossback), so I could not add it there.');
-    const res = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id) VALUES (?, ?, ?, ?, ?)').run(list.id, name, address || null, amount, uid || null);
+    const res = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id, site) VALUES (?, ?, ?, ?, ?, ?)').run(list.id, name, address || null, amount, uid || null, site);
     key = `lossback:${Number(res.lastInsertRowid)}`;
     await require('./commands/list').refreshMessage(client, list.id);
   } else {
     const now = Date.now();
-    const res = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?)`)
-      .run(g, what || 'Other', name, amount, clean(d.note, 200) || null, by, now, now);
+    const res = db.prepare(`INSERT INTO rewards (guild_id, label, username, reward, notes, status, created_by, created_at, updated_at, site) VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?, ?)`)
+      .run(g, what || 'Other', name, amount, clean(d.note, 200) || null, by, now, now, site);
     key = `reward:${Number(res.lastInsertRowid)}`;
   }
   setMeta(key, { tmp: String(d.key), origin: ORIGINS.has(String(d.origin ?? '')) ? String(d.origin ?? '') : '', note: clean(d.note, 200) });
-  await logToGuild(client, g, `➕ <@${by}> registered a **${kind}** payout for ${name} (${amount}) from the website.`);
+  await logToGuild(client, g, `➕ <@${by}> registered a **${siteLabel(site)} ${kind}** payout for ${name} (${amount}) from the website.`);
   return key;
 }
 

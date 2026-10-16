@@ -5,8 +5,7 @@ const {
 const { db, getSettings, updateSettings } = require('../db');
 const { eph, requireMod, truncate, logToGuild } = require('../utils');
 const { createList, refreshMessage, getList } = require('./list');
-
-const ETH_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
+const { SITES, siteOf, siteLabel, ETH_ADDRESS, WALLET_RULE, walletNotice, BAD_ADDRESS, siteButtons } = require('../sites');
 const DAY = 86_400_000;
 
 // ---------- "Is it Friday?" (in the server's lossback timezone, UTC unless changed) ----------
@@ -45,7 +44,7 @@ async function spawnList(interaction, target, title) {
   const id = await createList(target, {
     guildId: interaction.guildId, userId: interaction.user.id, kind: 'lossback',
     title: title || `Lossback — ${dateLabel(tz)}`,
-    description: 'All addresses are **USDT (ETH)**. ✅ = paid · ⬜ = waiting. Staff add the loss amount.',
+    description: 'All addresses are members\' **personal USDT (ETH)** wallets. 🟢 Stake · 🌙 Moon. ✅ = paid · ⬜ = waiting. Staff add the loss amount.',
     col1: 'Username', col2: 'USDT ETH Address', col3: 'Loss',
   });
   updateSettings(interaction.guildId, { lossback_list_id: id });
@@ -69,19 +68,30 @@ const data = new SlashCommandBuilder()
     .addChannelOption(o => o.setName('channel').setDescription('STAFF channel for the list (default: where the current list is)').addChannelTypes(...textTypes))
     .addStringOption(o => o.setName('title').setDescription('List title (default: Lossback — today\'s date)').setMaxLength(100)))
   .addSubcommand(s => s.setName('config').setDescription('Set the code shown on the form and the timezone used for "Friday"')
-    .addStringOption(o => o.setName('code').setDescription('Your code, shown on the panel and form (e.g. MYCODE)').setMaxLength(40))
+    .addStringOption(o => o.setName('code').setDescription('Your Stake code, shown on the panel and form (e.g. MYCODE)').setMaxLength(40))
+    .addStringOption(o => o.setName('moon_code').setDescription('Your Moon code, shown on the panel and form').setMaxLength(40))
     .addStringOption(o => o.setName('timezone').setDescription('IANA timezone, e.g. UTC, Europe/London, America/New_York (default UTC)').setMaxLength(60)));
+
+/** The code members play under on each site (set with /lossback config). */
+const codeOf = (s, site) => (site === 'moon' ? s.lossback_code_moon : s.lossback_code) || null;
+
+/** Lossback buttons, one per site. */
+const lossbackButtons = () => siteButtons(site => `lb:submit:${site}`, site => `${SITES[site].label} lossback`);
 
 function panelPayload(guildId, custom) {
   const s = getSettings(guildId);
   const tz = s.lossback_tz || 'UTC';
+  const codes = Object.keys(SITES).map(site => codeOf(s, site) && `${SITES[site].label} code **${codeOf(s, site)}**`).filter(Boolean).join(' · ');
   return {
     embeds: [new EmbedBuilder().setColor('#E67E22').setTitle('💸 Lossback')
-      .setDescription(custom ?? `Lossback forms are open **every Friday only** (${tz}).\nPress the button and enter your username${s.lossback_code ? ` under code **${s.lossback_code}**` : ''} and your **USDT (ETH)** address. Staff will add your loss and pay you.`)],
-    components: [new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('lb:submit').setLabel('Submit lossback').setEmoji('💸').setStyle(ButtonStyle.Primary))],
+      .setDescription(`${custom ?? `Lossback forms are open **every Friday only** (${tz}).\nPress **Stake lossback** or **Moon lossback** (the site you played on) and enter your username${codes ? ` (${codes})` : ''} and your **personal USDT (ETH)** wallet. Staff will add your loss and pay you.`}\n\n💳 ${WALLET_RULE}`)],
+    components: [lossbackButtons()],
   };
 }
+
+/** A member's waiting (not paid, not disqualified) submission on this list for this site. */
+const waitingEntry = (listId, userId, site) => db.prepare("SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(site, 'stake') = ? AND COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0")
+  .get(listId, userId, site);
 
 async function execute(interaction) {
   if (!requireMod(interaction)) return;
@@ -90,13 +100,14 @@ async function execute(interaction) {
 
   if (sub === 'config') {
     const code = interaction.options.getString('code');
+    const moonCode = interaction.options.getString('moon_code');
     const tz = interaction.options.getString('timezone');
     if (tz && !validTz(tz.trim())) return interaction.reply(eph({ content: '❌ Unknown timezone. Use an IANA name like `UTC`, `Europe/London`, `Africa/Tunis` or `America/New_York`.' }));
-    if (code == null && tz == null) {
+    if (code == null && moonCode == null && tz == null) {
       const s = getSettings(g);
-      return interaction.reply(eph({ content: `Code: **${s.lossback_code || 'not set'}** · Timezone: **${s.lossback_tz || 'UTC'}** · Open now: **${isFriday(s.lossback_tz || 'UTC') ? 'yes (Friday)' : 'no'}**` }));
+      return interaction.reply(eph({ content: `Stake code: **${s.lossback_code || 'not set'}** · Moon code: **${s.lossback_code_moon || 'not set'}** · Timezone: **${s.lossback_tz || 'UTC'}** · Open now: **${isFriday(s.lossback_tz || 'UTC') ? 'yes (Friday)' : 'no'}**` }));
     }
-    updateSettings(g, { ...(code != null && { lossback_code: code.trim() || null }), ...(tz != null && { lossback_tz: tz.trim() }) });
+    updateSettings(g, { ...(code != null && { lossback_code: code.trim() || null }), ...(moonCode != null && { lossback_code_moon: moonCode.trim() || null }), ...(tz != null && { lossback_tz: tz.trim() }) });
     return interaction.reply(eph({ content: '✅ Saved. Re-post the panel with `/lossback panel` to show the new text.' }));
   }
 
@@ -130,32 +141,38 @@ async function execute(interaction) {
 // ---------- the member's button + form ----------
 
 const buttons = {
-  async lb(interaction, [action]) {
+  async lb(interaction, [action, siteStr]) {
     if (action !== 'submit') return;
     const g = interaction.guildId;
     const tz = tzOf(g);
     if (!isFriday(tz)) return interaction.reply(eph({ content: closedMessage(tz) }));
     const l = activeList(g);
     if (!l) return interaction.reply(eph({ content: '❌ Lossback isn\'t set up yet. Please tell a mod.' }));
-    const mine = db.prepare('SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0').get(l.id, interaction.user.id);
-    if (mine) return interaction.reply(eph({ content: '✅ You already have a lossback submission waiting for staff. You can submit again once it has been paid.' }));
+    // Panels posted before Moon existed have one button without a site: ask which one first
+    if (!SITES[siteStr]) return interaction.reply(eph({ content: 'Which site did you play on?', components: [lossbackButtons()] }));
+    const site = siteStr;
+    if (waitingEntry(l.id, interaction.user.id, site)) return interaction.reply(eph({ content: `✅ You already have a **${siteLabel(site)}** lossback submission waiting for staff. You can submit again once it has been paid.` }));
 
-    const code = getSettings(g).lossback_code;
-    const prof = await require('../siteTickets').profileOf(interaction.user.id);        // Stake username + wallet linked on the website (empty if none / site slow)
+    const code = codeOf(getSettings(g), site);
+    const prof = await require('../siteTickets').profileOf(interaction.user.id);        // Stake / Moon username + wallet linked on the website (empty if none / site slow)
     const input = (id, label, ph, max, value) => {
       const t = new TextInputBuilder().setCustomId(id).setLabel(truncate(label, 45)).setPlaceholder(ph).setStyle(TextInputStyle.Short).setMaxLength(max).setRequired(true);
       if (value) t.setValue(String(value).slice(0, max));
       return new ActionRowBuilder().addComponents(t);
     };
-    return interaction.showModal(new ModalBuilder().setCustomId('lbform').setTitle('Lossback').addComponents(
-      input('username', code ? `Username under code ${code}` : 'Your username', 'Your exact username', 80, prof?.stake_username),
-      input('address', 'USDT ETH address', '0x… (USDT on Ethereum / ERC-20) — double check it', 60, prof?.eth_address),
-    ));
+    const name = SITES[site].label;
+    return interaction.showModal(new ModalBuilder().setCustomId(`lbform:${site}`).setTitle(`${name} lossback`)
+      .addTextDisplayComponents(walletNotice())
+      .addComponents(
+        input('username', code ? `${name} username under code ${code}` : `Your ${name} username`, `Your exact ${name} username`, 80, site === 'moon' ? prof?.moon_username : prof?.stake_username),
+        input('address', 'Your PERSONAL USDT (ETH) wallet', '0x… your own wallet. NOT a Stake or Moon deposit address', 60, prof?.eth_address),
+      ));
   },
 };
 
 const modals = {
-  async lbform(interaction) {
+  async lbform(interaction, [siteStr]) {
+    const site = siteOf(siteStr);
     const g = interaction.guildId;
     const tz = tzOf(g);
     if (!isFriday(tz)) return interaction.reply(eph({ content: closedMessage(tz) }));
@@ -164,16 +181,14 @@ const modals = {
 
     const username = interaction.fields.getTextInputValue('username').replace(/\s+/g, ' ').trim();
     const address = interaction.fields.getTextInputValue('address').trim();
-    if (!ETH_ADDRESS.test(address)) {
-      return interaction.reply(eph({ content: '❌ That doesn\'t look like a valid **USDT ETH** address. It must start with `0x` followed by 40 characters (letters a–f and numbers). Please press the button and try again.' }));
+    if (!ETH_ADDRESS.test(address)) return interaction.reply(eph({ content: BAD_ADDRESS }));
+    if (waitingEntry(l.id, interaction.user.id, site)) {
+      return interaction.reply(eph({ content: `✅ You already have a **${siteLabel(site)}** lossback submission waiting for staff.` }));
     }
-    if (db.prepare('SELECT 1 FROM list_entries WHERE list_id = ? AND user_id = ? AND COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0').get(l.id, interaction.user.id)) {
-      return interaction.reply(eph({ content: '✅ You already have a lossback submission waiting for staff.' }));
-    }
-    db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id) VALUES (?, ?, ?, NULL, ?)').run(l.id, username, address, interaction.user.id);
+    db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id, site) VALUES (?, ?, ?, NULL, ?, ?)').run(l.id, username, address, interaction.user.id, site);
     await refreshMessage(interaction.client, l.id);
-    await logToGuild(interaction.client, g, `💸 <@${interaction.user.id}> submitted lossback as **${username}** (list #${l.id}).`);
-    return interaction.reply(eph({ content: '✅ Your lossback was submitted. Staff will add your loss amount and pay you.' }));
+    await logToGuild(interaction.client, g, `💸 <@${interaction.user.id}> submitted a **${siteLabel(site)}** lossback as **${username}** (list #${l.id}).`);
+    return interaction.reply(eph({ content: `✅ Your **${siteLabel(site)}** lossback was submitted. Staff will add your loss amount and pay you.` }));
   },
 };
 
