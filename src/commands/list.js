@@ -5,6 +5,7 @@ const {
 const { db } = require('../db');
 const { eph, isMod, requireMod, truncate, logToGuild } = require('../utils');
 const { siteTag } = require('../sites');
+const { notifyLossback, forget } = require('../lossbackNotify');
 
 const PAGE_SIZE = 20;      // entries per page (lossback lists use 15: two lines per entry)
 const isLB = l => l.kind === 'lossback';
@@ -72,7 +73,10 @@ function render(listId) {
     new ButtonBuilder().setCustomId(`ls:rem:${l.id}`).setLabel('Remove').setEmoji('🗑️').setStyle(ButtonStyle.Danger).setDisabled(!total),
   )];
   const second = [];
-  if (isLB(l)) second.push(new ButtonBuilder().setCustomId(`ls:paid:${l.id}`).setLabel('Mark paid').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(!total));
+  if (isLB(l)) second.push(
+    new ButtonBuilder().setCustomId(`ls:paid:${l.id}`).setLabel('Mark paid').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(!total),
+    new ButtonBuilder().setCustomId(`ls:dq:${l.id}`).setLabel('Disqualify').setEmoji('🚫').setStyle(ButtonStyle.Danger).setDisabled(!total),
+  );
   second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
   if (pages > 1) {
     second.push(
@@ -132,17 +136,19 @@ function pageRows(l) {
 }
 
 function entryPicker(l, kind) {
-  const { page, rows } = pageRows(l);
+  const { page, rows: all } = pageRows(l);
+  const rows = kind === 'dq' ? all.filter(r => !r.paid) : all;          // a paid lossback can't be disqualified
   if (!rows.length) return null;
+  const mark = r => (kind === 'paid' ? (r.paid ? '✅ ' : '⬜ ') : kind === 'dq' ? (r.dq ? '🚫 ' : '⬜ ') : '');
   const menu = new StringSelectMenuBuilder().setCustomId(`lssel:${kind}:${l.id}`)
-    .setPlaceholder({ edit: 'Which entry do you want to edit?', rem: 'Pick the entries to remove…', paid: 'Pick entries to toggle paid / unpaid…' }[kind])
-    .addOptions(rows.map((r, i) => {
-      const opt = { label: truncate(`${kind === 'paid' ? (r.paid ? '✅ ' : '⬜ ') : ''}${page * psize(l) + i + 1}. ${r.name}`, 100), value: String(r.id) };
+    .setPlaceholder({ edit: 'Which entry do you want to edit?', rem: 'Pick the entries to remove…', paid: 'Pick entries to toggle paid / unpaid…', dq: 'Which entry do you want to disqualify?' }[kind])
+    .addOptions(rows.map(r => {
+      const opt = { label: truncate(`${mark(r)}${page * psize(l) + all.indexOf(r) + 1}. ${r.name}`, 100), value: String(r.id) };
       const desc = [r.value1, r.value2].filter(Boolean).join(' · ');
       if (desc) opt.description = truncate(desc, 100);
       return opt;
     }));
-  if (kind !== 'edit') menu.setMinValues(1).setMaxValues(rows.length);
+  if (kind !== 'edit' && kind !== 'dq') menu.setMinValues(1).setMaxValues(rows.length);
   return new ActionRowBuilder().addComponents(menu);
 }
 
@@ -267,14 +273,14 @@ const buttons = {
         field('lines', truncate(`${heads} — keep the line order`, 45), TextInputStyle.Paragraph, 4000, true, lines.join('\n'))));
     }
 
-    if (action === 'edit' || action === 'rem' || action === 'paid') {
-      if (action === 'paid' && !isLB(l)) return interaction.reply(eph({ content: 'Paid marks are only on lossback lists.' }));
+    if (action === 'edit' || action === 'rem' || action === 'paid' || action === 'dq') {
+      if ((action === 'paid' || action === 'dq') && !isLB(l)) return interaction.reply(eph({ content: 'Paid marks and disqualifying are only on lossback lists.' }));
       const picker = entryPicker(l, action);
-      if (!picker) return interaction.reply(eph({ content: 'The list is empty.' }));
+      if (!picker) return interaction.reply(eph({ content: action === 'dq' ? 'Nothing to disqualify on this page (paid entries can\'t be disqualified).' : 'The list is empty.' }));
       const total = countEntries(l.id);
       const more = total > psize(l) ? '\n*(Shows the page currently displayed — use ◀ ▶ on the list to reach other entries.)*' : '';
       return interaction.reply(eph({
-        content: { edit: '✏️ Pick the entry to edit:', rem: '🗑️ Pick one or more entries to remove:', paid: '✅ Pick the entries to mark as paid (picking a paid one marks it unpaid again):' }[action] + more,
+        content: { edit: '✏️ Pick the entry to edit:', rem: '🗑️ Pick one or more entries to remove:', paid: '✅ Pick the entries to mark as paid (picking a paid one marks it unpaid again). The member gets a DM when it is paid.', dq: '🚫 Pick the entry to disqualify. You can give a reason; the member gets a DM. (Picking a 🚫 one removes the disqualification.)' }[action] + more,
         components: [picker],
       }));
     }
@@ -308,11 +314,27 @@ const selects = {
     if (kind === 'paid') {
       const ids = interaction.values.map(Number);
       const q = `list_id = ? AND id IN (${ids.map(() => '?').join(',')})`;
-      const before = db.prepare(`SELECT name, paid FROM list_entries WHERE ${q}`).all(l.id, ...ids);
+      const before = db.prepare(`SELECT * FROM list_entries WHERE ${q}`).all(l.id, ...ids);
       db.prepare(`UPDATE list_entries SET paid = 1 - COALESCE(paid, 0) WHERE ${q}`).run(l.id, ...ids);
       await refreshMessage(interaction.client, l.id);
+      for (const e of before) if (!e.paid) notifyLossback(interaction.client, e, 'paid').catch(() => {});   // don't make staff wait on the DMs
       await logToGuild(interaction.client, interaction.guildId, `✅ <@${interaction.user.id}> toggled paid on ${before.map(b => `**${b.name}** (${b.paid ? 'now unpaid' : 'now paid'})`).join(', ')} in list **${l.title}**.`);
       return interaction.update({ content: `✅ Updated ${before.length} ${before.length === 1 ? 'entry' : 'entries'}.`, components: [] });
+    }
+
+    if (kind === 'dq') {
+      const e = db.prepare('SELECT * FROM list_entries WHERE id = ? AND list_id = ?').get(Number(interaction.values[0]), l.id);
+      if (!e) return interaction.update({ content: '❌ That entry no longer exists.', components: [] });
+      if (e.paid) return interaction.update({ content: '❌ That lossback is already paid, so it can\'t be disqualified.', components: [] });
+      if (e.dq) {                                                       // undo
+        db.prepare('UPDATE list_entries SET dq = 0, dq_reason = NULL WHERE id = ?').run(e.id);
+        forget(e.id, 'dq');
+        await refreshMessage(interaction.client, l.id);
+        await logToGuild(interaction.client, interaction.guildId, `↩️ <@${interaction.user.id}> removed the disqualification of **${e.name}** in list **${l.title}**.`);
+        return interaction.update({ content: `↩️ **${e.name}** is no longer disqualified.`, components: [] });
+      }
+      return interaction.showModal(new ModalBuilder().setCustomId(`lsdq:${l.id}:${e.id}`).setTitle(truncate(`Disqualify ${e.name}`, 45))
+        .addComponents(field('reason', 'Reason (sent to the member)', TextInputStyle.Paragraph, 200, false, null, 'e.g. Wager was below the minimum / played on another code')));
     }
 
     if (kind === 'rem') {
@@ -388,6 +410,26 @@ const modals = {
       });
     })();
     return applyChange(interaction, l.id, `✅ Bulk edit saved: ${changed} updated, ${added} added.`);
+  },
+
+  async lsdq(interaction, [idStr, entryId]) {
+    if (!requireMod(interaction)) return;
+    const l = getList(Number(idStr));
+    const done = content => (interaction.isFromMessage() ? interaction.update({ content, components: [] }) : interaction.reply(eph({ content })));
+    if (!l) return done('❌ This list no longer exists.');
+    const e = db.prepare('SELECT * FROM list_entries WHERE id = ? AND list_id = ?').get(Number(entryId), l.id);
+    if (!e) return done('❌ That entry no longer exists.');
+    if (e.paid) return done('❌ That lossback is already paid, so it can\'t be disqualified.');
+    if (e.dq) return done(`🚫 **${e.name}** is already disqualified.`);
+    const reason = clean(interaction.fields.getTextInputValue('reason'), 200);
+    db.prepare('UPDATE list_entries SET dq = 1, dq_reason = ? WHERE id = ?').run(reason || null, e.id);
+    await refreshMessage(interaction.client, l.id);
+    await logToGuild(interaction.client, interaction.guildId, `🚫 <@${interaction.user.id}> disqualified lossback **${e.name}** in list **${l.title}**${reason ? `: ${reason}` : ''}.`);
+    await done(`🚫 **${e.name}** is disqualified.${e.user_id ? ' Sending them a DM…' : ' (No Discord account on this entry, so nobody to DM.)'}`);
+    if (e.user_id) {
+      const sent = await notifyLossback(interaction.client, e, 'dq', reason);
+      if (!sent) await interaction.followUp(eph({ content: '📭 I couldn\'t DM them (DMs closed?). It\'s noted in the log channel.' })).catch(() => {});
+    }
   },
 
   async lsset(interaction, [idStr]) {

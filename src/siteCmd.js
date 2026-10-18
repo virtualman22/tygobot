@@ -14,6 +14,7 @@
 const { db, getSettings } = require('./db');
 const { logToGuild } = require('./utils');
 const { SITES, siteOf, siteLabel } = require('./sites');
+const { notifyLossback } = require('./lossbackNotify');
 
 db.exec(`CREATE TABLE IF NOT EXISTS site_meta (key TEXT PRIMARY KEY, tmp TEXT, origin TEXT, note TEXT);`);
 
@@ -55,6 +56,7 @@ async function pay(client, p, by) {
       db.prepare('UPDATE list_entries SET paid = 1 WHERE id = ?').run(e.id);
       await logToGuild(client, gid(client), `✅ <@${by}> marked lossback **${e.name}** as paid (from the website).`);
       await require('./commands/list').refreshMessage(client, e.list_id);
+      await notifyLossback(client, e, 'paid');
     }
   }
 }
@@ -77,6 +79,7 @@ async function dq(client, p, by, reason) {
     db.prepare('UPDATE list_entries SET dq = 1, dq_reason = ? WHERE id = ?').run(reason || null, e.id);
     await logToGuild(client, gid(client), `🚫 <@${by}> disqualified lossback **${e.name}** (from the website)${reason ? `: ${reason}` : ''}.`);
     await require('./commands/list').refreshMessage(client, e.list_id);
+    if (!e.dq) await notifyLossback(client, e, 'dq', reason);
   }
 }
 
