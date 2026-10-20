@@ -7,6 +7,7 @@
  *
  *   Guess The Balance (site)  ->  every guess, guessing opened/closed, final result + ranking  ->  GTB channel
  *   Site tickets              ->  one thread per ticket (staff-only channel), full chat mirrored, buttons to reply/claim/close
+ *   Referral program          ->  staff cards, milestone shout-outs and DMs (src/referrals.js)
  *
  * Needs (Railway variables):  SITE_URL, BRIDGE_SECRET   (same secret as 'bridge_secret' in the site's config.local.php)
  * Optional:                   BRIDGE_POLL_MS (4000), GTB_GUESS_MODE=live|close (live), GTB_CHANNEL_ID, SITE_TICKETS_CHANNEL_ID
@@ -238,6 +239,7 @@ function warn(msg) {
 async function handle(ev) {
   if (ev.type === 'ticket.dc_open') return require('./siteTickets').onDcOpen(clientRef, ev, api);
   if (ev.type === 'record.cmd') { const k = await require('./siteCmd').handle(clientRef, ev, api); if (k.length) cmdTouched = true; return; }
+  if (ev.type.startsWith('ref.')) return require('./referrals').onEvent(clientRef, ev);
   if (ev.type.startsWith('gtb.')) return onGtb(ev);
   if (ev.type.startsWith('ticket.')) return onTicket(ev);
 }

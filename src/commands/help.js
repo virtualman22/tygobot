@@ -131,6 +131,22 @@ const PAGES = {
         '**`/rename name: [channel:]`** — rename any channel (this one by default). Discord allows 2 renames per channel every 10 minutes.',
     }),
   },
+  referral: {
+    label: '🤝 Referrals', description: 'Who referred who, the wager ladder and paying rewards',
+    build: () => ({
+      title: '🤝 Referral program',
+      description:
+        'The website keeps the referral program, so Discord and the site always show the same thing. Rewards are worked out automatically from the Stake **weighted wager** every 10 minutes.\n\n' +
+        '**Everyone**\n' +
+        '`/referral me` — your referrals, how far each one is on this month\'s ladder, and your rewards\n' +
+        '`/referral ladder` — what the program pays and the rules\n\n' +
+        '**Staff 🔒** (must also be on the website\'s staff list and have logged in there once)\n' +
+        '`/referral add referrer: referee: stake: verified:` — register who referred who. The Stake name is filled in if the referee linked it on the website. Self-referrals and players that are already registered are refused.\n' +
+        '`/referral verify id:` — the referee is verified by Stake: from now on they count · `/referral void id: reason:` · `/referral restore id:`\n' +
+        '`/referral list` · `/referral stats user:` · `/referral rewards` (to pay) · `/referral pay id: note:` · `/referral check`\n\n' +
+        '**Setup:** `/setup set referral_staff_channel:#staff` (cards with ✅ Verify / Mark paid / 🚫 Void buttons) and `referral_channel:#public` (shout-outs when someone earns). Referrers get a DM for every reward and when it is paid.',
+    }),
+  },
   gtb: {
     label: '💰 Guess The Balance', description: 'Run a GTB game', mod: true,
     build: () => ({
