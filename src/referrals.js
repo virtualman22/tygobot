@@ -39,7 +39,7 @@ const who = (id, name) => (id ? `<@${id}>${name ? ` (${clip(name, 40)})` : ''}` 
 function rewardWhat(x, referee = '') {
   const of = referee ? ` · ${clip(referee, 40)}` : '';
   if (x.type === 'ladder') {
-    const extra = Number(x.amount) < Number(x.tier_amount) ? ` (+${money(x.amount)} on top of the earlier steps)` : '';
+    const extra = Number(x.amount) < Number(x.tier_amount) ? ` (top-up of ${money(x.amount)})` : '';
     return `${x.referral_id ? 'Hit' : 'Referrals together hit'} **${money(x.tier)}** weighted wager → ${money(x.tier_amount)} step${extra}${of}`;
   }
   if (x.type === 'lb_cut') return `${Math.round(Number(x.amount) / Number(x.prize) * 100)}% of a **${money(x.prize)}** leaderboard prize (rank #${x.rank})${of}`;

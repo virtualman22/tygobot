@@ -54,7 +54,7 @@ function ladderEmbed(j) {
   return new EmbedBuilder().setColor(COLOR).setTitle('🚀 TYGO GAMBLES — Referral program')
     .setDescription('Earn passive income by bringing friends, family or potential highrollers into the server. The more your referrals wager and climb the leaderboards, the more you cash in.')
     .addFields(
-      { name: '💵 Monthly weighted wager ladder', value: `${steps}\n${j.basis === 'combined' ? '*All your referrals\' weighted wager counts together.*' : '*Per referral, per leaderboard season. Each step pays as soon as it is reached.*'}` },
+      { name: '💵 Monthly weighted wager ladder', value: `${steps}\n${j.basis === 'combined' ? '*All your referrals\' weighted wager counts together.*' : '*Per referral, per leaderboard season. Steps add up: every step reached pays, as soon as it is reached.*'}` },
       { name: '🏆 Bonus', value: `You also get a **${j.cut_pct}% cut** of your referrals' monthly leaderboard cash prizes.` },
       { name: '⚠️ Rules', value: RULES },
       { name: 'How to join', value: 'Bring someone in, then open a ticket so staff can register who you referred. Follow your progress with `/referral me`.' },
