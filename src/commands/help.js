@@ -144,7 +144,8 @@ const PAGES = {
         '`/referral add referrer: referee: stake: verified:` — register who referred who. The Stake name is filled in if the referee linked it on the website. Self-referrals and players that are already registered are refused.\n' +
         '`/referral verify id:` — the referee is verified by Stake: from now on they count · `/referral void id: reason:` · `/referral restore id:`\n' +
         '`/referral list` · `/referral stats user:` · `/referral rewards` (to pay) · `/referral pay id: note:` · `/referral check`\n\n' +
-        '**Setup:** `/setup set referral_staff_channel:#staff` (cards with ✅ Verify / Mark paid / 🚫 Void buttons) and `referral_channel:#public` (shout-outs when someone earns). Referrers get a DM for every reward and when it is paid.',
+        '**Setup:** `/setup set referral_staff_channel:#staff` and `referral_channel:#public` (shout-outs when someone earns).\n' +
+        'In the staff channel every referral gets a card (✅ Verified by Stake / 🚫 Void), and every **referrer gets ONE rewards card** listing everything still to pay with what each reward is for: ✅ **Mark all paid**, or pick one to mark paid / void. New rewards move that card to the bottom. Referrers get one DM per batch of new rewards and one when they are paid.',
     }),
   },
   gtb: {

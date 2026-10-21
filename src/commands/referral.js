@@ -161,8 +161,9 @@ const textModal = (id, title, label, required, ph) => new ModalBuilder().setCust
   new TextInputBuilder().setCustomId('text').setLabel(label).setStyle(TextInputStyle.Short).setMaxLength(200).setRequired(required).setPlaceholder(ph)));
 
 const buttons = {
-  async rf(interaction, [action, id]) {
+  async rf(interaction, [action, id, upto]) {
     if (!isMod(interaction)) return noStaff(interaction);
+    if (action === 'payall') return interaction.showModal(textModal(`rf:payall:${id}:${upto}`, 'Mark all their rewards paid', 'Transaction hash or note (optional)', false, 'One payment for everything on the card'));
     if (action === 'verify') return relay(interaction, { action: 'ref_op', id: Number(id), op: 'verify' }, `✅ Referral #${id} verified. It counts from the next check.`);
     if (action === 'restore') return relay(interaction, { action: 'ref_op', id: Number(id), op: 'restore' }, `↩️ Referral #${id} restored.`);
     if (action === 'void') return interaction.showModal(textModal(`rf:void:${id}`, `Void referral #${id}`, 'Reason', false, 'Unpaid rewards of this referral are voided too'));
@@ -172,13 +173,30 @@ const buttons = {
 };
 
 const modals = {
-  async rf(interaction, [action, id]) {
+  async rf(interaction, [action, id, upto]) {
     if (!isMod(interaction)) return noStaff(interaction);
     const text = interaction.fields.getTextInputValue('text').trim();
+    if (action === 'payall') {
+      await interaction.deferReply({ flags: 64 });
+      try {
+        const j = await ask({ action: 'ref_reward_all', discord_id: interaction.user.id, referrer_id: id, upto: Number(upto) || 0, ref: text });
+        return interaction.editReply(`✅ ${j.ids.length} reward${j.ids.length === 1 ? '' : 's'} marked paid (**${money(j.total)}** to <@${id}>). They get one DM; the card updates in a few seconds.`);
+      } catch (e) { return interaction.editReply(`❌ ${e.message}`); }
+    }
     if (action === 'void') return relay(interaction, { action: 'ref_op', id: Number(id), op: 'void', reason: text }, `🚫 Referral #${id} voided. The card updates in a few seconds.`);
     if (action === 'rvoid') return relay(interaction, { action: 'ref_reward', id: Number(id), op: 'void', reason: text }, `🚫 Reward #${id} voided.`);
     if (action === 'pay') return relay(interaction, { action: 'ref_reward', id: Number(id), op: 'pay', ref: text }, `✅ Reward #${id} marked paid. The referrer gets a DM.`);
   },
 };
 
-module.exports = { data, execute, buttons, modals };
+// the "Mark one paid…" / "Void one…" pickers on a person's rewards card
+const selects = {
+  async rfsel(interaction, [action]) {
+    if (!isMod(interaction)) return noStaff(interaction);
+    const id = interaction.values[0];
+    if (action === 'pay') return interaction.showModal(textModal(`rf:pay:${id}`, `Mark reward #${id} paid`, 'Transaction hash or note (optional)', false, '0x…'));
+    if (action === 'void') return interaction.showModal(textModal(`rf:rvoid:${id}`, `Void reward #${id}`, 'Reason', false, 'It will not be created again'));
+  },
+};
+
+module.exports = { data, execute, buttons, modals, selects };

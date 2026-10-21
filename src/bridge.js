@@ -86,22 +86,29 @@ async function onGtb(ev) {
   }
 
   if (ev.type === 'gtb.guess') {
-    db.prepare('INSERT OR REPLACE INTO site_gtb_guesses (hunt_id, discord_id, name, guess, ts) VALUES (?, ?, ?, ?, ?)')
+    db.prepare('INSERT INTO site_gtb_guesses (hunt_id, discord_id, name, guess, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT(hunt_id, discord_id) DO UPDATE SET name = excluded.name, guess = excluded.guess')
       .run(d.hunt_id, d.discord_id, d.name, d.guess, ev.t * 1000);
-    if (GUESS_MODE !== 'live') return;
+    if (GUESS_MODE !== 'live' || d.quiet) return;   // quiet = an admin added / edited it on the site
     return ch.send({ content: `🎯 **${clip(d.name, 40)}** guessed **${money(d.guess)}** · guess #${d.count}`, allowedMentions: noPing });
+  }
+
+  if (ev.type === 'gtb.guess_removed') {
+    db.prepare('DELETE FROM site_gtb_guesses WHERE hunt_id = ? AND discord_id = ?').run(d.hunt_id, d.discord_id);
+    return;
   }
 
   if (ev.type === 'gtb.finished') {
     const r = d.ranked ?? [];
     const dir = x => (x.diff === 0 ? 'exact!' : x.guess > d.final_balance ? 'over' : 'under');
     const top = r.slice(0, 3);
+    const isMember = x => /^\d+$/.test(String(x.discord_id));   // admin-added guests have no Discord account
+    const tag = x => (isMember(x) ? ` (<@${x.discord_id}>)` : '');
     const embed = new EmbedBuilder().setColor('#F1C40F').setTitle(`🏁 GTB result — ${clip(d.hunt, 80)}`)
       .addFields({ name: 'Final balance', value: `**${money(d.final_balance)}**`, inline: true }, { name: 'Start balance', value: money(d.start_balance), inline: true })
-      .setDescription(top.length ? top.map((x, i) => `${medals[i]} **${clip(x.name, 40)}** (<@${x.discord_id}>) — guessed **${money(x.guess)}** · off by **${money(x.diff)}** (${dir(x)})`).join('\n') : '*Nobody entered this one.*')
+      .setDescription(top.length ? top.map((x, i) => `${medals[i]} **${clip(x.name, 40)}**${tag(x)} — guessed **${money(x.guess)}** · off by **${money(x.diff)}** (${dir(x)})`).join('\n') : '*Nobody entered this one.*')
       .setFooter({ text: `${d.total} total ${d.total === 1 ? 'entry' : 'entries'}` });
-    if (top[0]) embed.addFields({ name: 'Winner', value: `🎉 <@${top[0].discord_id}>` });
-    await ch.send({ embeds: [embed], allowedMentions: { users: top.map(x => String(x.discord_id)) } });
+    if (top[0]) embed.addFields({ name: 'Winner', value: `🎉 ${isMember(top[0]) ? `<@${top[0].discord_id}>` : `**${clip(top[0].name, 40)}**`}` });
+    await ch.send({ embeds: [embed], allowedMentions: { users: top.filter(isMember).map(x => String(x.discord_id)) } });
     if (r.length > 3) {
       const lines = r.slice(3).map((x, i) => `${i + 4}. **${clip(x.name, 40)}** — ${money(x.guess)} · off by ${money(x.diff)}`);
       if (d.total > r.length) lines.push(`…and ${d.total - r.length} more`);
