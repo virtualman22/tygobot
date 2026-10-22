@@ -330,7 +330,17 @@ const buttons = {
       if (!SITES[site]) {
         return interaction.reply(eph({ content: `Which site is this **${CATEGORIES[key].label}** for?`, components: [new ActionRowBuilder().addComponents(claimButtons(key))] }));
       }
-      const prof = await require('../siteTickets').profileOf(info ? info.userId : interaction.user.id);   // Stake / Moon username + wallet linked on the website
+      const st = require('../siteTickets');
+      const owner = info ? info.userId : interaction.user.id;
+      const acc = await st.lookup(owner);                                                   // Stake / Moon username + wallet linked on the website
+      if (st.siteLoginRequired() && acc.found !== true) {
+        const login = `${require('../bridge').SITE}/login.php`;
+        if (acc.found === null) return interaction.reply(eph({ content: '⚠️ I couldn\'t reach the website to check the account. Please try again in a minute.' }));
+        return interaction.reply(eph({ content: owner === interaction.user.id
+          ? `🔒 Claims are only open to members who have logged in on the website.\nLog in with Discord here: ${login}\nThen press the button again.`
+          : `🔒 <@${owner}> hasn't logged in on the website yet (${login}). They need to do that before a claim can be filled in.`, allowedMentions: { parse: [] } }));
+      }
+      const prof = acc.p;
       return interaction.showModal(claimModal(key, 0, site, { stake_user: site === 'moon' ? prof?.moon_username : prof?.stake_username, address: prof?.eth_address }));
     }
 

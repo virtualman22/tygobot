@@ -214,6 +214,9 @@ for (const col of ['referral_channel TEXT', 'referral_staff_channel TEXT']) {
   try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch { /* already migrated */ }
 }
 
+// Alt detection (site) -> private staff channel (src/bridge.js)
+try { db.exec('ALTER TABLE settings ADD COLUMN alt_channel TEXT'); } catch { /* already migrated */ }
+
 // Migration: templates keep a JSON blob so they can hold any announcement style
 try { db.exec('ALTER TABLE templates ADD COLUMN fields TEXT'); } catch { /* already migrated */ }
 
@@ -222,7 +225,7 @@ const SETTING_COLUMNS = [
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
   'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_code_moon',
-  'referral_channel', 'referral_staff_channel',
+  'referral_channel', 'referral_staff_channel', 'alt_channel',
 ];
 
 function getSettings(guildId) {

@@ -21,19 +21,30 @@ const gid = client => process.env.GUILD_ID || client?.guilds?.cache?.first()?.id
 
 // ───────────── forms: autofill from the site profile ─────────────
 const profiles = new Map();
-/** Stake / Moon username, Kick name and wallet the member linked on the website. Never slows a form by more than 1.5 s; null if unknown. */
-async function profileOf(userId) {
-  if (!enabled() || !userId) return null;
+/**
+ * Looks a member up on the website. Never slows a form by more than 1.5 s.
+ * found: true (has logged in on the site), false (never has), null (couldn't ask: link off, site down or too slow).
+ */
+async function lookup(userId) {
+  if (!enabled() || !userId) return { found: null, p: null };
   const hit = profiles.get(userId);
-  if (hit && Date.now() - hit.at < 60_000) return hit.p;
+  if (hit && Date.now() - hit.at < 60_000) return { found: true, p: hit.p };
   try {
     const j = await bridge().api('POST', { action: 'profile', discord_id: String(userId) }, '', 1500);
-    const p = j.ok && j.found ? { stake_username: j.stake_username || '', moon_username: j.moon_username || '', kick_username: j.kick_username || '', eth_address: j.eth_address || '' } : null;
+    if (!j.ok) return { found: null, p: null };
+    if (!j.found) return { found: false, p: null };     // not cached: someone who logs in on the site now can retry right away
+    const p = { stake_username: j.stake_username || '', moon_username: j.moon_username || '', kick_username: j.kick_username || '', eth_address: j.eth_address || '' };
     profiles.set(userId, { at: Date.now(), p });
     if (profiles.size > 500) profiles.delete(profiles.keys().next().value);
-    return p;
-  } catch { return null; }
+    return { found: true, p };
+  } catch { return { found: null, p: null }; }
 }
+
+/** Stake / Moon username, Kick name and wallet the member linked on the website; null if unknown. */
+async function profileOf(userId) { return (await lookup(userId)).p; }
+
+/** Claim forms need a website account (on whenever the site link is on; CLAIMS_REQUIRE_SITE_LOGIN=false turns it off). */
+const siteLoginRequired = () => enabled() && process.env.CLAIMS_REQUIRE_SITE_LOGIN !== 'false';
 
 // ───────────── Discord -> site ─────────────
 async function mirrorOpen(channel, userId, username, cat, by = '', req = '') {
@@ -106,4 +117,4 @@ async function onDcOpen(client, ev, api) {
   }
 }
 
-module.exports = { profileOf, mirrorOpen, mirrorMessage, mirrorState, onDcTicket, onDcOpen };
+module.exports = { lookup, profileOf, siteLoginRequired, mirrorOpen, mirrorMessage, mirrorState, onDcTicket, onDcOpen };

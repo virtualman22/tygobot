@@ -8,10 +8,11 @@
  *   Guess The Balance (site)  ->  every guess, guessing opened/closed, final result + ranking  ->  GTB channel
  *   Site tickets              ->  one thread per ticket (staff-only channel), full chat mirrored, buttons to reply/claim/close
  *   Referral program          ->  staff cards, milestone shout-outs and DMs (src/referrals.js)
+ *   Alt detection             ->  account held / hold lifted / new suspected link / staff "Not alts"  ->  alt channel (staff only)
  *
  * Needs (Railway variables):  SITE_URL, BRIDGE_SECRET   (same secret as 'bridge_secret' in the site's config.local.php)
- * Optional:                   BRIDGE_POLL_MS (4000), GTB_GUESS_MODE=live|close (live), GTB_CHANNEL_ID, SITE_TICKETS_CHANNEL_ID
- * Channels are normally set in Discord with  /setup set gtb_channel:#...  and  site_tickets_channel:#...
+ * Optional:                   BRIDGE_POLL_MS (4000), GTB_GUESS_MODE=live|close (live), GTB_CHANNEL_ID, SITE_TICKETS_CHANNEL_ID, ALT_CHANNEL_ID
+ * Channels are normally set in Discord with  /setup set gtb_channel:#...  site_tickets_channel:#...  alt_channel:#...
  */
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { db, getSettings } = require('./db');
@@ -53,6 +54,7 @@ function guildId() { return process.env.GUILD_ID || clientRef?.guilds.cache.firs
 function cfg() { const g = guildId(); return g ? getSettings(g) : {}; }
 const gtbChannelId = () => cfg().gtb_channel || process.env.GTB_CHANNEL_ID || null;
 const ticketChannelId = () => cfg().site_tickets_channel || process.env.SITE_TICKETS_CHANNEL_ID || null;
+const altChannelId = () => cfg().alt_channel || process.env.ALT_CHANNEL_ID || null;
 
 async function channelOf(id) {
   if (!id) return null;
@@ -234,6 +236,62 @@ async function onTicket(ev) {
   }
 }
 
+// ───────────── Alt detection -> staff channel ─────────────
+// Reasons stay in this staff-only channel: telling a member which signal caught them helps them dodge it next time.
+const person = p => {
+  if (!p?.id) return '*unknown*';
+  const extra = [p.stake && `Stake: \`${clip(p.stake, 30)}\``, p.kick && `Kick: \`${clip(p.kick, 30)}\``].filter(Boolean).join(' · ');
+  return `<@${p.id}> (${clip(p.name, 40)})${extra ? `\n${extra}` : ''}`;
+};
+const reasons = why => (why?.length ? why.map(w => `• ${clip(w, 120)}`).join('\n').slice(0, 1024) : '*no details*');
+
+async function onAlt(ev) {
+  const d = ev.data;
+  const ch = await channelOf(altChannelId());
+  if (!ch) { state.dropped++; warn('Alt event skipped: no alt channel set. Use /setup set alt_channel:#staff-channel'); return; }
+  const e = new EmbedBuilder().setTimestamp(ev.t * 1000);
+
+  if (ev.type === 'alt.hold') {
+    e.setColor('#E74C3C').setTitle('⛔ Account held: possible alt')
+      .addFields(
+        { name: 'Held account', value: person(d.user), inline: true },
+        { name: 'Looks like', value: person(d.with), inline: true },
+        { name: 'Score', value: `**${d.score}**/100`, inline: true },
+        { name: 'Why', value: reasons(d.why) },
+      )
+      .setFooter({ text: 'Held accounts earn no points and can\'t use the shop, raffles or tournaments until staff press "Not alts" on the site.' });
+  } else if (ev.type === 'alt.link') {
+    e.setColor('#F1C40F').setTitle('🔎 New possible alt link')
+      .addFields(
+        { name: 'Account', value: person(d.a), inline: true },
+        { name: 'Linked to', value: person(d.b), inline: true },
+        { name: 'Score', value: `**${d.score}**/100`, inline: true },
+        { name: 'Why', value: reasons(d.why) },
+      )
+      .setFooter({ text: 'Below the hold limit, so nobody was held. The link is kept on record.' });
+  } else if (ev.type === 'alt.release') {
+    e.setColor('#2ECC71').setTitle('🔓 Hold lifted')
+      .addFields(
+        { name: 'Account', value: person(d.user), inline: true },
+        { name: 'Was linked to', value: person(d.with), inline: true },
+      )
+      .setFooter({ text: 'The automatic re-check no longer finds enough evidence.' });
+  } else if (ev.type === 'alt.review') {
+    const name = id => clip([d.a, d.b].find(p => p?.id === id)?.name ?? id, 40);
+    e.setColor(d.on ? '#2ECC71' : '#E67E22').setTitle(d.on ? '✅ Marked as not alts' : '↩️ "Not alts" undone')
+      .addFields(
+        { name: 'Account', value: person(d.a), inline: true },
+        { name: 'Account', value: person(d.b), inline: true },
+        { name: 'By', value: clip(d.by, 40) || '*staff*', inline: true },
+      );
+    if (d.released?.length) e.addFields({ name: '🔓 Hold lifted', value: d.released.map(name).join(', ') });
+    if (d.held?.length) e.addFields({ name: '⛔ Held again', value: d.held.map(name).join(', ') });
+  } else return;
+
+  const row = SITE ? [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open on site').setStyle(ButtonStyle.Link).setURL(`${SITE}/admin.php?s=users`))] : [];
+  return ch.send({ embeds: [e], components: row, allowedMentions: noPing });
+}
+
 // ───────────── the poll loop ─────────────
 const lastWarn = new Map();
 function warn(msg) {
@@ -247,6 +305,7 @@ async function handle(ev) {
   if (ev.type === 'ticket.dc_open') return require('./siteTickets').onDcOpen(clientRef, ev, api);
   if (ev.type === 'record.cmd') { const k = await require('./siteCmd').handle(clientRef, ev, api); if (k.length) cmdTouched = true; return; }
   if (ev.type.startsWith('ref.')) return require('./referrals').onEvent(clientRef, ev);
+  if (ev.type.startsWith('alt.')) return onAlt(ev);
   if (ev.type.startsWith('gtb.')) return onGtb(ev);
   if (ev.type.startsWith('ticket.')) return onTicket(ev);
 }
@@ -296,4 +355,4 @@ function start(client) {
   require('./siteSync').start(client, api);     // claim forms, rewards tracker and lossbacks -> website (old ones too)
 }
 
-module.exports = { start, tick, api, enabled, state, cardEmbed, handle, SITE, gtbChannelId, ticketChannelId, _setClient: c => { clientRef = c; } };
+module.exports = { start, tick, api, enabled, state, cardEmbed, handle, SITE, gtbChannelId, ticketChannelId, altChannelId, _setClient: c => { clientRef = c; } };

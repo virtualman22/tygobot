@@ -25,6 +25,8 @@ async function execute(interaction) {
         { name: 'Site', value: bridge.SITE || '*SITE_URL not set*', inline: true },
         { name: 'GTB channel', value: ch(bridge.gtbChannelId()), inline: true },
         { name: 'Site tickets channel', value: ch(bridge.ticketChannelId()), inline: true },
+        { name: 'Alt alerts channel', value: ch(bridge.altChannelId()), inline: true },
+        { name: 'Claim forms', value: require('../siteTickets').siteLoginRequired() ? '🔒 only members who logged in on the website' : 'open to everyone', inline: true },
         { name: 'Handled / dropped', value: `${st.handled} / ${st.dropped}`, inline: true },
         { name: 'Tickets mirrored', value: String(open), inline: true },
         { name: 'Discord tickets on the site', value: process.env.ENABLE_PRIVILEGED_INTENTS === 'true' ? '✅ messages in ticket channels are mirrored both ways' : '⚠️ opening/closing is mirrored, but I can\'t read the messages: set ENABLE_PRIVILEGED_INTENTS=true (and enable Message Content Intent in the Developer Portal)', inline: false },

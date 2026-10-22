@@ -6,7 +6,7 @@ const ch = id => (id ? `<#${id}>` : '*not set*');
 const hr = h => (h == null ? '*off*' : `${String(h).padStart(2, '0')}:00 UTC`);
 
 const CLEARABLE = [
-  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'referral_channel', 'referral_staff_channel', 'welcome_channel', 'qotd_channel', 'qotd_hour',
+  'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'referral_channel', 'referral_staff_channel', 'alt_channel', 'welcome_channel', 'qotd_channel', 'qotd_hour',
   'trivia_channel', 'trivia_hour', 'suggest_channel', 'starboard_channel',
 ];
 
@@ -26,6 +26,7 @@ const data = new SlashCommandBuilder()
     .addChannelOption(o => o.setName('site_tickets_channel').setDescription('PRIVATE staff channel: website tickets get a thread here').addChannelTypes(...text))
     .addChannelOption(o => o.setName('referral_channel').setDescription('Public channel: shout-outs when a referrer earns a milestone reward').addChannelTypes(...text))
     .addChannelOption(o => o.setName('referral_staff_channel').setDescription('PRIVATE staff channel: referral + reward cards with Verify / Mark paid buttons').addChannelTypes(...text))
+    .addChannelOption(o => o.setName('alt_channel').setDescription('PRIVATE staff channel: website alt detection (holds, new links, "Not alts")').addChannelTypes(...text))
     .addChannelOption(o => o.setName('welcome_channel').setDescription('Welcome message channel').addChannelTypes(...text))
     .addStringOption(o => o.setName('welcome_message').setDescription('Use {user} {server} {count}').setMaxLength(500))
     .addChannelOption(o => o.setName('qotd_channel').setDescription('Question of the Day channel').addChannelTypes(...text))
@@ -61,7 +62,7 @@ async function execute(interaction) {
   const s = getSettings(g);
   const embed = new EmbedBuilder().setColor('#9146FF').setTitle('⚙️ Server settings').addFields(
     { name: 'Announcements', value: `Channel: ${ch(s.announce_channel)}\nMod role: ${s.mod_role ? `<@&${s.mod_role}>` : '*not set*'}\nLog: ${ch(s.log_channel)}\nClaims: ${ch(s.claims_channel)}` },
-    { name: 'Website link', value: `GTB: ${ch(s.gtb_channel)}\nSite tickets: ${ch(s.site_tickets_channel)}\nStatus: \`/sitelink status\`` },
+    { name: 'Website link', value: `GTB: ${ch(s.gtb_channel)}\nSite tickets: ${ch(s.site_tickets_channel)}\nAlt alerts: ${ch(s.alt_channel)}\nStatus: \`/sitelink status\`` },
     { name: 'Referrals', value: `Shout-outs: ${ch(s.referral_channel)}\nStaff cards: ${ch(s.referral_staff_channel)}` },
     { name: 'Welcome', value: `Channel: ${ch(s.welcome_channel)}\nMessage: ${s.welcome_message}` },
     { name: 'Daily posts', value: `QOTD: ${ch(s.qotd_channel)} at ${hr(s.qotd_hour)}\nTrivia: ${ch(s.trivia_channel)} at ${hr(s.trivia_hour)}` },
