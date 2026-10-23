@@ -11,7 +11,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { db } = require('./db');
 const { logToGuild, truncate } = require('./utils');
-const { siteTag } = require('./sites');
+const { siteTag, payoutReminder } = require('./sites');
 
 db.exec(`CREATE TABLE IF NOT EXISTS lossback_dm (entry_id INTEGER, status TEXT, at INTEGER, PRIMARY KEY (entry_id, status));`);
 
@@ -43,7 +43,7 @@ async function notifyLossback(client, entry, status, reason = '') {
 
   const embed = status === 'paid'
     ? new EmbedBuilder().setColor('#2ECC71').setTitle('✅ Your lossback has been paid!')
-      .setDescription(`Your lossback from **${guildName}** was sent${entry.value1 ? ` to your wallet \`${shortAddr(entry.value1)}\`` : ''}. Please check your wallet. If it hasn't arrived within a few hours, open a ticket.`)
+      .setDescription(`Your lossback from **${guildName}** was sent${entry.value1 ? ` to your wallet \`${shortAddr(entry.value1)}\`` : ''}. Please check your wallet. If it hasn't arrived within a few hours, open a ticket.\n\n${payoutReminder(entry.site)}`)
       .addFields(fields)
     : new EmbedBuilder().setColor('#E74C3C').setTitle('🚫 Your lossback was disqualified')
       .setDescription(`Staff at **${guildName}** disqualified this lossback submission.${reason ? `\n\n**Reason:** ${truncate(reason, 500)}` : ''}\n\nYou can submit a new lossback form next Friday. If you think this is a mistake, open a ticket.`)

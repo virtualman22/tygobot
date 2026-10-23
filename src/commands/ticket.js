@@ -4,7 +4,7 @@ const {
 } = require('discord.js');
 const { db, getSettings } = require('../db');
 const { eph, isMod, requireMod, logToGuild, truncate, ts } = require('../utils');
-const { SITES, siteOf, siteLabel, siteTag, ETH_ADDRESS, WALLET_RULE, walletNotice, BAD_ADDRESS, siteButtons } = require('../sites');
+const { SITES, siteOf, siteLabel, siteTag, ETH_ADDRESS, WALLET_RULE, walletNotice, BAD_ADDRESS, siteButtons, payoutReminder } = require('../sites');
 
 const P = PermissionFlagsBits;
 
@@ -182,7 +182,7 @@ async function payClaim(client, claim, userId) {
     origin = await client.channels.fetch(claim.channel_id);
     const isTicket = String(origin.topic ?? '').startsWith('ticket:');
     await origin.send({
-      content: `✅ <@${claim.user_id}> your payment of **${claim.amount}** has been sent. Thanks!${isTicket ? ' A mod can close this ticket now.' : ''}`,
+      content: `✅ <@${claim.user_id}> your payment of **${claim.amount}** has been sent. Thanks!${isTicket ? ' A mod can close this ticket now.' : ''}\n${payoutReminder(claim.site)}`,
       allowedMentions: { users: [claim.user_id] },
     });
     notified = true;

@@ -6,11 +6,13 @@
  *   ref.paid_all                     is for), recently paid, totals, and Mark all paid / Mark one paid / Void one
  *   New rewards also bump that card to the bottom of the channel, post one shout-out in the public referral channel and send the
  *   referrer one DM. Rewards that arrive together (e.g. several ladder steps at once) are bundled into one bump / shout-out / DM.
+ *   When rewards are paid, the referrer gets a DM listing them and every referee they came from gets one too (notifyPaid).
  * Channels: /setup set referral_channel:#public referral_staff_channel:#staff (both optional; without them only the DMs are sent).
  * The /referral command (commands/referral.js) and the buttons talk to the site through bridge.api().
  */
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const { db, getSettings } = require('./db');
+const { payoutReminder } = require('./sites');
 
 db.exec(`CREATE TABLE IF NOT EXISTS ref_cards (key TEXT PRIMARY KEY, channel_id TEXT, message_id TEXT, status TEXT);
 CREATE TABLE IF NOT EXISTS ref_seen (reward_id INTEGER PRIMARY KEY, status TEXT);`);
@@ -233,6 +235,47 @@ async function flush(id) {
     + `${b.wallet ? 'It will be sent to the payout wallet on your website account.' : '⚠️ You have no payout wallet on the website yet: add one under My Account so staff can pay you.'}\nSee everything with \`/referral me\`.`);
 }
 
+// ───────────── paid: DM the referrer and every referee the rewards came from ─────────────
+/** What the referee did to earn their referrer this reward, from the referee's side. */
+function youDid(x) {
+  if (x.type === 'ladder') return `you reached **${money(x.tier)}** weighted wager${x.season_label ? ` in ${clip(x.season_label, 40)}` : ''}`;
+  if (x.type === 'lb_cut') return `you finished **#${x.rank}** on the ${clip(x.season_label, 60) || 'season'} leaderboard`;
+  return `of a referral bonus${x.note ? ` (${clip(x.note, 100)})` : ''}`;
+}
+/** Several ladder steps of one season paid together read as the highest one. */
+function becauseOf(xs) {
+  const top = new Map(), other = new Set();
+  for (const x of xs) {
+    if (x.type !== 'ladder') { other.add(youDid(x)); continue; }
+    const k = x.season_label || '', cur = top.get(k);
+    if (!cur || Number(x.tier) > Number(cur.tier)) top.set(k, x);
+  }
+  return [...[...top.values()].map(youDid), ...other].join(' and ');
+}
+/** rewards: the paid rewards, each with referee (name) and referee_id. */
+async function notifyPaid(referrerId, referrerName, rewards, ref) {
+  if (!rewards.length) return;
+  const total = rewards.reduce((a, x) => a + Number(x.amount), 0);
+  const lines = rewards.slice(0, 15).map(x => `• \`#${x.id}\` **${money(x.amount)}** · ${rewardWhat(x, x.referee)}`);
+  if (rewards.length > 15) lines.push(`…and ${rewards.length - 15} more`);
+  await dm(referrerId, `✅ **Referral payout sent: ${money(total)}**\n${lines.join('\n')}`
+    + `${ref ? `\nReference: \`${clip(ref, 180)}\`` : ''}\n${payoutReminder('stake')}\nThanks for bringing people in. Track your next rewards with \`/referral me\`.`);
+
+  const byReferee = new Map();
+  for (const x of rewards) {
+    const id = String(x.referee_id || '');
+    if (!id || id === String(referrerId)) continue;              // "all referrals together" / manual rewards have no single referee
+    if (!byReferee.has(id)) byReferee.set(id, []);
+    byReferee.get(id).push(x);
+  }
+  const from = `<@${referrerId}>${referrerName ? ` (${clip(referrerName, 40)})` : ''}`;
+  for (const [id, xs] of byReferee) {
+    const sum = xs.reduce((a, x) => a + Number(x.amount), 0);
+    await dm(id, `🎉 **Referral payout!** ${from}, who referred you, was just paid **${money(sum)}** because ${becauseOf(xs)}.\n`
+      + 'Want to earn too? Invite your friends and climb the ladder: `/referral ladder`');
+  }
+}
+
 const seen = id => db.prepare('SELECT status FROM ref_seen WHERE reward_id = ?').get(id)?.status;
 const markSeen = (id, status) => db.prepare('INSERT INTO ref_seen (reward_id, status) VALUES (?, ?) ON CONFLICT(reward_id) DO UPDATE SET status = excluded.status').run(id, status);
 
@@ -259,7 +302,7 @@ async function onEvent(client, ev) {
     markSeen(x.id, x.status);
     if (ev.type === 'ref.reward' && !before) queueNew(d);           // a new reward (not a retry of one we already announced)
     if (x.status === 'paid' && before && before !== 'paid') {
-      await dm(x.referrer_id, `✅ Your referral reward #${x.id} (**${money(x.amount)}**) has been paid.${x.pay_ref ? `\nReference: \`${clip(x.pay_ref, 180)}\`` : ''}`);
+      await notifyPaid(x.referrer_id, d.person?.name, [{ ...x, referee: d.referee, referee_id: d.referee_id }], x.pay_ref);
     }
     return;
   }
@@ -269,9 +312,11 @@ async function onEvent(client, ev) {
     if (d.person) await drawPerson(d.person, d.by);
     await dropLegacy(d.ids);
     for (const id of d.ids) markSeen(id, 'paid');
-    if (fresh.length) {
+    const rewards = (d.rewards ?? []).filter(x => fresh.includes(x.id));
+    if (rewards.length) await notifyPaid(d.referrer_id, d.person?.name, rewards, d.ref);
+    else if (fresh.length) {   // a site version that doesn't send the per-reward list yet: referrer only
       await dm(d.referrer_id, `✅ Your referral rewards have been paid: **${money(d.total)}** (${d.ids.length} reward${d.ids.length === 1 ? '' : 's'}: ${d.ids.map(i => `#${i}`).join(', ')}).`
-        + `${d.ref ? `\nReference: \`${clip(d.ref, 180)}\`` : ''}`);
+        + `${d.ref ? `\nReference: \`${clip(d.ref, 180)}\`` : ''}\n${payoutReminder('stake')}`);
     }
   }
 }
