@@ -37,6 +37,9 @@ async function tick(client) {
     await endGiveaway(client, g);
   }
 
+  // Lossback panels: switch between "Open now" and "Closed" when the Friday form opens / closes
+  await require('./commands/lossback').refreshPanels(client).catch(e => console.error('Lossback panel refresh failed:', e.message));
+
   // Daily trivia + question of the day (hours are UTC; catches up if the bot was offline at the exact hour)
   const d = new Date();
   const today = d.toISOString().slice(0, 10);

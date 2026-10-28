@@ -115,13 +115,13 @@ const PAGES = {
     }),
   },
   lossback: {
-    label: '💸 Lossback', description: 'Friday-only lossback form, staff list and /rename', mod: true,
+    label: '💸 Lossback', description: 'Friday lossback form (08:00–20:00 UTC+1), staff list and /rename', mod: true,
     build: () => ({
       title: '💸 Lossback 🔒',
       description:
-        '**Members:** every **Friday only**, they press **Stake lossback** or **Moon lossback** on the panel and enter their username (under your code for that site) and their **personal USDT (ETH)** wallet (never a Stake or Moon deposit address). The address is checked (must be `0x` + 40 characters). One waiting submission per member and site until it is paid.\n\n' +
+        '**Members:** every **Friday, 08:00–20:00 UTC+1** (by default), they press **Stake lossback** or **Moon lossback** on the panel and enter their username (under your code for that site) and their **personal USDT (ETH)** wallet (never a Stake or Moon deposit address). The address is checked (must be `0x` + 40 characters). One waiting submission per member and site until it is paid.\n\n' +
         '**Setup**\n' +
-        '`/lossback config code: moon_code: timezone:` — your Stake and Moon codes shown on the form, and the timezone that decides when "Friday" is (default UTC)\n' +
+        '`/lossback config code: moon_code: timezone: opens: closes:` — your Stake and Moon codes shown on the form, and when it is open on Fridays (default 8 to 20, `UTC+1`). The panel shows the open / close times as Discord timestamps (everyone sees their own time) and switches between Open and Closed by itself\n' +
         '`/lossback panel list_channel:#staff` — posts the panel and creates the staff list the first time (keep that channel staff-only)\n' +
         '`/lossback newlist` — start a fresh empty list, e.g. each week; new submissions go to it\n\n' +
         '**On the list** (columns: Username · USDT ETH Address · Loss)\n' +

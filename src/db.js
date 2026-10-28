@@ -211,7 +211,8 @@ BEGIN UPDATE list_entries SET created_at = CAST((julianday('now') - 2440587.5) *
 
 // Stake / Moon: every claim, lossback entry and reward belongs to one site (old rows count as Stake)
 for (const sql of ["ALTER TABLE claims ADD COLUMN site TEXT DEFAULT 'stake'", "ALTER TABLE list_entries ADD COLUMN site TEXT DEFAULT 'stake'",
-  'ALTER TABLE rewards ADD COLUMN site TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code_moon TEXT']) {
+  'ALTER TABLE rewards ADD COLUMN site TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code_moon TEXT',
+  'ALTER TABLE settings ADD COLUMN lossback_open_hour INTEGER', 'ALTER TABLE settings ADD COLUMN lossback_close_hour INTEGER']) {
   try { db.exec(sql); } catch { /* already migrated */ }
 }
 
@@ -230,7 +231,7 @@ const SETTING_COLUMNS = [
   'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'welcome_channel', 'welcome_message',
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
-  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_code_moon',
+  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_code_moon', 'lossback_open_hour', 'lossback_close_hour',
   'referral_channel', 'referral_staff_channel', 'alt_channel',
 ];
 
