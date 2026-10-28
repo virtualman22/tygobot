@@ -11,13 +11,14 @@
  * The site never deletes records: history stays even if something is removed in Discord.
  */
 const crypto = require('crypto');
-const { db } = require('./db');
+const { db, getSettings } = require('./db');
 require('./siteCmd');                       // makes sure the site_meta table exists
 const { siteOf, guessSite } = require('./sites');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS site_sync (key TEXT PRIMARY KEY, hash TEXT, paid_seen_at INTEGER, paid_approx INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS site_user_names (user_id TEXT PRIMARY KEY, name TEXT, at INTEGER);
+CREATE TABLE IF NOT EXISTS bot_flags (key TEXT PRIMARY KEY, at INTEGER);
 `);
 
 const EVERY_MS = Math.max(15_000, Number(process.env.SITE_SYNC_MS) || 60_000);
@@ -85,7 +86,8 @@ function build() {
     out.push({
       key, kind: 'lossback', site: siteOf(e.site), status: e.dq ? 'cancelled' : paid ? 'paid' : 'pending', note: e.dq ? `Disqualified${e.dq_reason ? ': ' + e.dq_reason : ''}` : '', user_id: e.user_id, discord_name: nameOf(e.user_id), user: e.name,
       what: e.l_title, group: e.l_title, amount_text: e.value2, address: e.value1,
-      created_at: sec(e.l_created), paid_at: paidAt, paid_approx: Boolean(approx),
+      created_at: sec(e.created_at) ?? sec(e.l_created), created_approx: !e.created_at,   // exact submit time; entries it was never recorded for get their list's date
+      paid_at: paidAt, paid_approx: Boolean(approx),
     });
   }
   for (const r of out) {                                   // source / note set on the website, and the placeholder key it was created under
@@ -121,9 +123,58 @@ async function syncOnce(client, api) {
   finally { state.running = false; }
 }
 
+const LOG_RE = /<@!?(\d+)> submitted a (?:\*\*[^*]+\*\* )?lossback as \*\*(.+?)\*\* \(list #(\d+)\)/;
+
+/**
+ * Lossback entries from before submissions were time-stamped get their exact time back from the bot's log channel
+ * ("💸 @member submitted a Stake lossback as name (list #3)"). Runs once; entries it can't find keep their list's date (marked approx.).
+ */
+async function backfillLossbackDates(client) {
+  if (db.prepare("SELECT 1 FROM bot_flags WHERE key = 'lossback_dates'").get()) return;
+  const todo = db.prepare(`SELECT e.id, e.list_id, e.user_id, e.name, l.guild_id, l.created_at AS l_created FROM list_entries e JOIN lists l ON l.id = e.list_id
+                           WHERE l.kind = 'lossback' AND e.created_at IS NULL ORDER BY e.id`).all();
+  let complete = true, fixed = 0;
+  for (const guildId of new Set(todo.map(e => e.guild_id))) {
+    const logId = getSettings(guildId).log_channel;
+    const ch = logId && await client.channels.fetch(logId).catch(() => null);
+    if (!ch?.messages) continue;                                    // no log channel: nothing to read the times from
+    const rows = todo.filter(e => e.guild_id === guildId);
+    const stopAt = Math.min(...rows.map(e => e.l_created || 0)) - 86_400_000;
+    const hits = [];
+    let before = null, reachedEnd = false;
+    for (let page = 0; page < 400 && !reachedEnd; page++) {
+      const got = await ch.messages.fetch({ limit: 100, ...(before && { before }), cache: false }).catch(() => null);
+      if (!got) { complete = false; break; }
+      const msgs = [...got.values()];
+      for (const m of msgs) {
+        const x = m.author.id === client.user.id && LOG_RE.exec(m.content);
+        if (x) hits.push({ t: m.createdTimestamp, user: x[1], name: x[2], list: Number(x[3]) });
+      }
+      const oldest = msgs.reduce((a, m) => (!a || BigInt(m.id) < BigInt(a.id) ? m : a), null);
+      reachedEnd = !oldest || got.size < 100 || oldest.createdTimestamp < stopAt;
+      before = oldest?.id;
+    }
+    if (!reachedEnd) complete = false;
+    hits.sort((a, b) => a.t - b.t);
+    const set = db.prepare('UPDATE list_entries SET created_at = ? WHERE id = ? AND created_at IS NULL');
+    const left = [...rows];
+    for (const hit of hits) {                                       // same list + member + name first, else same list + member (staff may have edited the name)
+      let i = left.findIndex(e => e.list_id === hit.list && String(e.user_id) === hit.user && e.name === hit.name);
+      if (i < 0) i = left.findIndex(e => e.list_id === hit.list && String(e.user_id) === hit.user);
+      if (i < 0) continue;
+      set.run(hit.t, left[i].id); left.splice(i, 1); fixed++;
+    }
+  }
+  if (complete) db.prepare("INSERT OR REPLACE INTO bot_flags (key, at) VALUES ('lossback_dates', ?)").run(Date.now());
+  if (todo.length) console.log(`[site sync] lossback dates: ${fixed} of ${todo.length} old submissions got their exact time from the log channel`);
+}
+
 function start(client, api) {
   if (timer) return;
-  setTimeout(() => syncOnce(client, api), 15_000);
+  setTimeout(async () => {
+    await backfillLossbackDates(client).catch(e => console.warn('[site sync] lossback dates:', e.message));
+    syncOnce(client, api);
+  }, 15_000);
   timer = setInterval(() => syncOnce(client, api), EVERY_MS);
 }
 

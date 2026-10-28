@@ -353,6 +353,7 @@ function start(client) {
   tick();
   timer = setInterval(tick, POLL_MS);
   require('./siteSync').start(client, api);     // claim forms, rewards tracker and lossbacks -> website (old ones too)
+  require('./transcripts').start(client);       // full history of every Discord ticket channel -> website (Ticket desk > Transcripts)
 }
 
 module.exports = { start, tick, api, enabled, state, cardEmbed, handle, SITE, gtbChannelId, ticketChannelId, altChannelId, _setClient: c => { clientRef = c; } };

@@ -9,6 +9,8 @@ const LINK_RE = /(https?:\/\/|discord\.gg\/|discord\.com\/invite\/)/i;
 module.exports = {
   name: Events.MessageCreate,
   async execute(message) {
+    // Ticket transcripts keep everything, the bot's own messages (claim forms, payment notes) included
+    if (message.inGuild() && String(message.channel?.topic ?? '').startsWith('ticket:')) require('../transcripts').touch(message.channel);
     if (message.author.bot || !message.inGuild()) return;
     const s = getSettings(message.guildId);
 

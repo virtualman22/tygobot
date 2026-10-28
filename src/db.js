@@ -199,9 +199,15 @@ CREATE INDEX IF NOT EXISTS idx_list_entries ON list_entries (list_id);
 for (const sql of ['ALTER TABLE lists ADD COLUMN kind TEXT', 'ALTER TABLE list_entries ADD COLUMN paid INTEGER DEFAULT 0',
   'ALTER TABLE list_entries ADD COLUMN user_id TEXT', 'ALTER TABLE settings ADD COLUMN lossback_list_id INTEGER',
   'ALTER TABLE settings ADD COLUMN lossback_tz TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code TEXT',
-  'ALTER TABLE list_entries ADD COLUMN dq INTEGER DEFAULT 0', 'ALTER TABLE list_entries ADD COLUMN dq_reason TEXT']) {
+  'ALTER TABLE list_entries ADD COLUMN dq INTEGER DEFAULT 0', 'ALTER TABLE list_entries ADD COLUMN dq_reason TEXT',
+  'ALTER TABLE list_entries ADD COLUMN created_at INTEGER']) {
   try { db.exec(sql); } catch { /* already migrated */ }
 }
+// Every new list entry (lossback form, staff, website) gets the time it was added, in ms. Older entries: see siteSync.js backfillLossbackDates()
+db.exec(`
+CREATE TRIGGER IF NOT EXISTS list_entries_created AFTER INSERT ON list_entries WHEN NEW.created_at IS NULL
+BEGIN UPDATE list_entries SET created_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id; END;
+`);
 
 // Stake / Moon: every claim, lossback entry and reward belongs to one site (old rows count as Stake)
 for (const sql of ["ALTER TABLE claims ADD COLUMN site TEXT DEFAULT 'stake'", "ALTER TABLE list_entries ADD COLUMN site TEXT DEFAULT 'stake'",

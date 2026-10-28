@@ -6,5 +6,6 @@ module.exports = {
   async execute(channel) {
     if (!String(channel?.topic ?? '').startsWith('ticket:')) return;
     await require('../siteTickets').mirrorState(channel.id, true, '').catch(() => {});
+    await require('../transcripts').markDeleted(channel);
   },
 };

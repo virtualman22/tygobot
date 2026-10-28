@@ -87,7 +87,8 @@ async function onDcTicket(client, ev) {
   if (!ch?.send) { bridge().state.dropped++; return; }                    // channel is gone
   if (ev.type === 'ticket.msg') {
     if (d.from !== 'staff' && d.from !== 'user') return;                  // internal notes and system lines stay on the site
-    await ch.send({ content: `**${d.name}**: ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } });
+    const sent = await ch.send({ content: `**${d.name}**: ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } });
+    require('./transcripts').markRelay(sent.id, d.name, d.uid);           // transcript shows the staff member, not the bot
   } else if (ev.type === 'ticket.state') {
     if (d.status === 'closed') await ch.send({ content: '🔒 This ticket was closed from the website. A mod can delete the channel with **Close ticket**.', allowedMentions: { parse: [] } });
     else if (d.assigned_name) await ch.send({ content: `🙋 **${d.assigned_name}** is handling this ticket (from the website).`, allowedMentions: { parse: [] } });
@@ -112,7 +113,8 @@ async function onDcOpen(client, ev, api) {
   const j = await mirrorOpen(channel, member.id, member.user.username, d.category, d.by_name || '', d.req);
   if (!j?.ok) return fail(j?.error || 'The site could not register the ticket.');
   if (d.text) {                                                           // optional first message, shown in the channel and recorded on the site ticket
-    await channel.send({ content: `**${d.by_name || 'Staff'}**: ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } }).catch(() => {});
+    const sent = await channel.send({ content: `**${d.by_name || 'Staff'}**: ${d.text}`.slice(0, 1990), allowedMentions: { parse: [] } }).catch(() => null);
+    if (sent) require('./transcripts').markRelay(sent.id, d.by_name || 'Staff', d.by);
     await api('POST', { action: 'dc_ticket_msg', channel_id: channel.id, author_id: d.by, author_name: d.by_name || 'Staff', staff: true, text: d.text }).catch(() => {});
   }
 }

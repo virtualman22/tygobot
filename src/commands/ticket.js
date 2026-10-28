@@ -385,7 +385,8 @@ const buttons = {
       await interaction.reply('🔒 Closing this ticket in 5 seconds…');
       require('../siteTickets').mirrorState(interaction.channel.id, true, interaction.user.username).catch(() => {});
       await logToGuild(interaction.client, guild.id, `🎫 Ticket **${interaction.channel.name}** closed by <@${interaction.user.id}>.`);
-      setTimeout(() => interaction.channel.delete().catch(() => {}), 5000);
+      const ch = interaction.channel;           // last transcript sync (this "Closing" line included), then delete
+      setTimeout(() => require('../transcripts').closeChannel(ch).finally(() => ch.delete().catch(() => {})), 5000);
     }
   },
 };
