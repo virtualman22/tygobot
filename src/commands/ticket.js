@@ -287,6 +287,7 @@ async function openTicketChannel(client, guild, userId, username, cat) {
     components: [buttonsRow],
     allowedMentions: { users: [userId], roles: s.mod_role ? [s.mod_role] : [] },
   });
+  require('../memberCard').postToTicket(ch, userId, client).catch(() => {});   // website member card, posted when it arrives (never holds the ticket up)
   await logToGuild(client, guild.id, `🎫 **${c.label}** ticket opened for <@${userId}>: ${ch}`);
   return { channel: ch };
 }
