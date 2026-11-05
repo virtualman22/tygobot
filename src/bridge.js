@@ -11,7 +11,7 @@
  *   Alt detection             ->  account held / hold lifted / new suspected link / staff "Not alts"  ->  alt channel (staff only)
  *
  * Needs (Railway variables):  SITE_URL, BRIDGE_SECRET   (same secret as 'bridge_secret' in the site's config.local.php)
- * Optional:                   BRIDGE_POLL_MS (4000), GTB_GUESS_MODE=live|close (live), GTB_CHANNEL_ID, SITE_TICKETS_CHANNEL_ID, ALT_CHANNEL_ID
+ * Optional:                   BRIDGE_POLL_MS (4000), GTB_GUESS_MODE=hidden|close|live (hidden), GTB_CHANNEL_ID, SITE_TICKETS_CHANNEL_ID, ALT_CHANNEL_ID
  * Channels are normally set in Discord with  /setup set gtb_channel:#...  site_tickets_channel:#...  alt_channel:#...
  */
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
@@ -20,7 +20,8 @@ const { db, getSettings } = require('./db');
 const SITE = (process.env.SITE_URL || '').replace(/\/+$/, '').replace(/^(?!https?:\/\/)(?=.)/, 'https://');
 const SECRET = process.env.BRIDGE_SECRET || '';
 const POLL_MS = Math.max(2000, Number(process.env.BRIDGE_POLL_MS) || 4000);
-const GUESS_MODE = process.env.GTB_GUESS_MODE === 'close' ? 'close' : 'live';
+// hidden (default) = guesses are never posted, only the results when the hunt finishes; close = the full list when guessing closes; live = each guess as it comes in
+const GUESS_MODE = ['close', 'live'].includes(process.env.GTB_GUESS_MODE) ? process.env.GTB_GUESS_MODE : 'hidden';
 const MAX_TRIES = 5;
 
 const enabled = () => Boolean(SITE && SECRET);
@@ -349,7 +350,7 @@ function start(client) {
   if (!enabled()) { console.log('[site bridge] off (set SITE_URL and BRIDGE_SECRET to link the website)'); return; }
   if (timer) return;
   state.started = true;
-  console.log(`[site bridge] on: polling ${SITE} every ${POLL_MS / 1000}s, guesses posted ${GUESS_MODE === 'live' ? 'live' : 'when guessing closes'}`);
+  console.log(`[site bridge] on: polling ${SITE} every ${POLL_MS / 1000}s, guesses posted ${GUESS_MODE === 'live' ? 'live' : GUESS_MODE === 'close' ? 'when guessing closes' : 'never (results only)'}`);
   tick();
   timer = setInterval(tick, POLL_MS);
   require('./siteSync').start(client, api);     // claim forms, rewards tracker and lossbacks -> website (old ones too)
