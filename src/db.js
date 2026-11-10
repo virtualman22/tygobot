@@ -209,12 +209,29 @@ CREATE TRIGGER IF NOT EXISTS list_entries_created AFTER INSERT ON list_entries W
 BEGIN UPDATE list_entries SET created_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id; END;
 `);
 
-// Stake / Moon: every claim, lossback entry and reward belongs to one site (old rows count as Stake)
+// Sites: every claim, lossback entry and reward belongs to one site (old rows count as Stake)
 for (const sql of ["ALTER TABLE claims ADD COLUMN site TEXT DEFAULT 'stake'", "ALTER TABLE list_entries ADD COLUMN site TEXT DEFAULT 'stake'",
-  'ALTER TABLE rewards ADD COLUMN site TEXT', 'ALTER TABLE settings ADD COLUMN lossback_code_moon TEXT',
+  'ALTER TABLE rewards ADD COLUMN site TEXT',
   'ALTER TABLE settings ADD COLUMN lossback_open_hour INTEGER', 'ALTER TABLE settings ADD COLUMN lossback_close_hour INTEGER']) {
   try { db.exec(sql); } catch { /* already migrated */ }
 }
+
+// Forms (/form): a public button + pop-up whose answers fill a list of kind 'form'.
+// fields = JSON [{ k, label, required }]; each answer is saved in list_entries.data as JSON { k: value }.
+try { db.exec('ALTER TABLE list_entries ADD COLUMN data TEXT'); } catch { /* already migrated */ }
+db.exec(`
+CREATE TABLE IF NOT EXISTS forms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL, list_id INTEGER,
+  title TEXT NOT NULL, description TEXT, fields TEXT NOT NULL, button TEXT,
+  one_per_user INTEGER DEFAULT 1, open INTEGER DEFAULT 1,
+  created_by TEXT, created_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_forms_list ON forms (list_id);
+CREATE TABLE IF NOT EXISTS form_panels (
+  message_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, guild_id TEXT NOT NULL, form_id INTEGER NOT NULL
+);
+`);
 
 // Referral program (src/referrals.js): public shout-out channel + private staff channel for the cards
 for (const col of ['referral_channel TEXT', 'referral_staff_channel TEXT']) {
@@ -231,7 +248,7 @@ const SETTING_COLUMNS = [
   'announce_channel', 'mod_role', 'log_channel', 'claims_channel', 'gtb_channel', 'site_tickets_channel', 'welcome_channel', 'welcome_message',
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
-  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_code_moon', 'lossback_open_hour', 'lossback_close_hour',
+  'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_open_hour', 'lossback_close_hour',
   'referral_channel', 'referral_staff_channel', 'alt_channel',
 ];
 

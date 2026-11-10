@@ -73,14 +73,14 @@ const PAGES = {
         '**Members:** press a button on the ticket panel. A private channel opens just for you and staff.\n' +
         '🎁 **Giveaway Claim** · 🏆 **Milestones** · 🛠️ **Technical Assistance** · 💰 **Bonuses**\n' +
         'You can have one open ticket per category.\n\n' +
-        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Stake claim** or **Moon claim** (the site the reward is for) and fill in what you won (or which milestone you hit), how much, your **personal** USDT (ETH) wallet and your Stake or Moon username. ' +
-        'Never a Stake or Moon deposit address: use your own wallet. For milestones, then upload your screenshot in the chat (or use `/screenshot`).\n\n' +
+        '**Claim forms** (Giveaway Claim, Milestones, Bonuses): press **Stake claim** and fill in what you won (or which milestone you hit), how much, your **personal** USDT (ETH) wallet and your Stake username. ' +
+        'Never a Stake deposit address: use your own wallet. For milestones, then upload your screenshot in the chat (or use `/screenshot`).\n\n' +
         '**Staff 🔒**\n' +
         '`/ticket panel` — post the ticket buttons\n' +
         '`/claimform` — post a claim form button in ANY chat. Submissions go to your claims channel (`/setup set claims_channel`) so addresses stay private.\n' +
         '**Mark as paid** on a claim card updates the rewards tracker, tells the member and renames their ticket to `paid-…`.\n' +
         '**Disqualify** on a claim card (with an optional reason) cancels it, tells the member and lets them submit again. Paid claims can\'t be disqualified.\n' +
-        'Each member can have **one active submission per category and site** (Stake / Moon) until it is paid or disqualified.\n' +
+        'Each member can have **one active submission per category** until it is paid or disqualified.\n' +
         '**Only staff can close tickets.** Close ticket deletes the channel after 5 seconds.',
     }),
   },
@@ -119,9 +119,9 @@ const PAGES = {
     build: () => ({
       title: '💸 Lossback 🔒',
       description:
-        '**Members:** every **Friday, 08:00–20:00 UTC+1** (by default), they press **Stake lossback** or **Moon lossback** on the panel and enter their username (under your code for that site) and their **personal USDT (ETH)** wallet (never a Stake or Moon deposit address). The address is checked (must be `0x` + 40 characters). One waiting submission per member and site until it is paid.\n\n' +
+        '**Members:** every **Friday, 08:00–20:00 UTC+1** (by default), they press **Stake lossback** on the panel and enter their Stake username (under your code) and their **personal USDT (ETH)** wallet (never a Stake deposit address). The address is checked (must be `0x` + 40 characters). One waiting submission per member until it is paid.\n\n' +
         '**Setup**\n' +
-        '`/lossback config code: moon_code: timezone: opens: closes:` — your Stake and Moon codes shown on the form, and when it is open on Fridays (default 8 to 20, `UTC+1`). The panel shows the open / close times as Discord timestamps (everyone sees their own time) and switches between Open and Closed by itself\n' +
+        '`/lossback config code: timezone: opens: closes:` — your Stake code shown on the form, and when it is open on Fridays (default 8 to 20, `UTC+1`). The panel shows the open / close times as Discord timestamps (everyone sees their own time) and switches between Open and Closed by itself\n' +
         '`/lossback panel list_channel:#staff` — posts the panel and creates the staff list the first time (keep that channel staff-only)\n' +
         '`/lossback newlist` — start a fresh empty list, e.g. each week; new submissions go to it\n\n' +
         '**On the list** (columns: Username · USDT ETH Address · Loss)\n' +
@@ -129,6 +129,26 @@ const PAGES = {
         '📝 **Bulk edit** — edit the whole page as text, one line per entry: `username | address | loss` (keep the line order; new lines are added)\n' +
         '➕ **Add** / 📥 **Bulk add** — add people manually · ✏️ **Edit** · 🗑️ **Remove** · ⚙️ **Settings**\n\n' +
         '**`/rename name: [channel:]`** — rename any channel (this one by default). Discord allows 2 renames per channel every 10 minutes.',
+    }),
+  },
+  forms: {
+    label: '📝 Forms', description: 'Your own forms: a button members fill in, answers collected in a list', mod: true,
+    build: () => ({
+      title: '📝 Forms 🔒',
+      description:
+        'Collect anything (usernames, entries, sign-ups…) with a button members press and fill in.\n\n' +
+        '**Make one:** `/form create list_channel:#staff [channel:#where-the-button-goes]`\n' +
+        'A pop-up asks for the **title**, **what members fill in** (one per line, up to 5; end a line with `(optional)` to make it optional), ' +
+        'the panel text, the button text and **entries per member** (one, where sending again updates it, or unlimited).\n' +
+        'The bot then creates the **empty list** in your staff channel and posts the **button** for members.\n\n' +
+        '**On the list**\n' +
+        '⚙️ **Edit form** — the same pop-up: change the title and fields any time. Answers already sent stay under their field\n' +
+        '🔒 **Close form** / 🔓 **Open form** — stop or allow new answers (the button turns grey while closed)\n' +
+        '➕ **Add** · 📥 **Bulk add** · 📝 **Bulk edit** · ✏️ **Edit** · 🗑️ **Remove** — same as any list\n\n' +
+        '`/form panel` — post the button again (another channel, or after it was deleted)\n' +
+        '`/form all` — every form, open or closed, with its list\n' +
+        '`/form delete` — delete a form with its list and buttons\n' +
+        'Lossback has its own form: see **💸 Lossback**.',
     }),
   },
   referral: {

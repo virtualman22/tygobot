@@ -55,7 +55,7 @@ function cardEmbed(c, user, { staff = false } = {}) {
       { name: '🛡️ Staff only', value: [
         `**Status:** ${status}`,
         `**All-time wagered:** ${c.stake ? (s.all ? `${money(s.all.wagered)} (${money(s.all.weighted)} weighted)` : 'nothing found') : '—'}`,
-        `**Moon:** ${s.moon ? safe(s.moon) : 'not linked'} · **Payout wallet:** ${s.wallet ? 'linked' : 'none'}`,
+        `**Payout wallet:** ${s.wallet ? 'linked' : 'none'}`,
         `**Last seen on the site:** ${rel(s.last_seen)} · **Discord ID:** \`${c.discord_id}\``,
       ].join('\n') },
     );

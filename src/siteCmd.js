@@ -5,7 +5,7 @@
  *   pay      mark a claim / reward / lossback as paid        (claims: card updated, member told, ticket renamed — same as the button)
  *   dq       disqualify                                        (claims: card + member told; rewards: Cancelled; lossbacks: 🚫 and the member can submit again)
  *   delete   remove it from the bot (claim row + rewards entry + card message, or the lossback list entry)
- *   edit     amount / category / site (Stake or Moon) / source / note
+ *   edit     amount / category / source / note
  *   add      register one by hand for a member (claim + card, lossback list entry, or a rewards-tracker entry)
  *
  * Afterwards the record is sent back to the site straight away (siteSync), which clears the "syncing" mark there.

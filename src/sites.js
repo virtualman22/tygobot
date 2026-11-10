@@ -1,27 +1,26 @@
 /**
- * sites.js — the casinos we pay out for. Every claim / lossback / reward belongs to one of them,
- * so staff (and the website) can keep Stake and Moon payouts apart.
+ * sites.js — the casinos we pay out for. Every claim / lossback / reward belongs to one of them.
+ * Only Stake is left: old records and old buttons with another site (or none) count as Stake.
  */
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextDisplayBuilder } = require('discord.js');
 
 const SITES = {
   stake: { label: 'Stake', emoji: '🟢', style: ButtonStyle.Success },
-  moon: { label: 'Moon', emoji: '🌙', style: ButtonStyle.Primary },
 };
 const SITE_KEYS = Object.keys(SITES);
 
-/** Unknown / missing (old records) -> 'stake', which is all there was before Moon. */
+/** Unknown / missing / removed site -> 'stake'. */
 const siteOf = s => (SITES[s] ? s : 'stake');
 const siteLabel = s => SITES[siteOf(s)].label;
 const siteTag = s => `${SITES[siteOf(s)].emoji} ${siteLabel(s)}`;
 
-/** A bit of text that hints at a site (free-text labels of the manual rewards tracker). */
-const guessSite = text => (/\bmoon\b/i.test(String(text ?? '')) ? 'moon' : 'stake');
+/** The site a free-text label hints at (manual rewards tracker). Stake is the only one. */
+const guessSite = () => 'stake';
 
 const ETH_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 
 const WALLET_RULE = 'Use your own **personal** wallet (MetaMask, Trust Wallet, Ledger…) for **USDT on Ethereum (ERC-20)**. '
-  + '**Never** a Stake or Moon wallet / deposit address: payouts sent there can be lost and can\'t be reversed.';
+  + '**Never** a Stake wallet / deposit address: payouts sent there can be lost and can\'t be reversed.';
 
 /**
  * Added to every "you've been paid" message: payouts go to a personal wallet and must then be deposited on the site they are for.
@@ -34,7 +33,7 @@ const payoutReminder = s => `⚠️ **Reminder:** deposit this payout from your 
 const walletNotice = () => new TextDisplayBuilder().setContent(`⚠️ ${WALLET_RULE}`);
 
 const BAD_ADDRESS = '❌ That doesn\'t look like a valid **USDT (ETH)** address. It must start with `0x` followed by 40 characters (letters a–f and numbers).\n'
-  + 'Use your **own personal wallet**, not a Stake or Moon deposit address. Please press the button and try again.';
+  + 'Use your **own personal wallet**, not a Stake deposit address. Please press the button and try again.';
 
 /** One button per site, e.g. `tk:details:giveaway:<site>` — `idFor(site)` builds the custom id. */
 const siteButtons = (idFor, labelFor = s => `${SITES[s].label}`) => new ActionRowBuilder().addComponents(

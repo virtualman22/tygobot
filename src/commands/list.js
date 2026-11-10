@@ -7,9 +7,10 @@ const { eph, isMod, requireMod, truncate, logToGuild } = require('../utils');
 const { siteTag } = require('../sites');
 const { notifyLossback, forget } = require('../lossbackNotify');
 
-const PAGE_SIZE = 20;      // entries per page (lossback lists use 15: two lines per entry)
+const PAGE_SIZE = 20;      // entries per page (lossback and form lists use 15: one line per entry, not a table)
 const isLB = l => l.kind === 'lossback';
-const psize = l => (isLB(l) ? 15 : PAGE_SIZE);
+const isForm = l => l.kind === 'form';
+const psize = l => (isLB(l) || isForm(l) ? 15 : PAGE_SIZE);
 const MAX_ENTRIES = 500;   // per list
 const COLOR = '#9146FF';
 
@@ -21,6 +22,33 @@ const clean = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 /** Value columns that are switched on for this list (a column with no header is hidden). */
 const valueCols = l => [l.col2 && { key: 'value1', head: l.col2 }, l.col3 && { key: 'value2', head: l.col3 }].filter(Boolean);
+
+// Form lists (/form) have up to 5 columns: the form's fields. Answers live in list_entries.data as { fieldKey: value }.
+const formOf = l => (isForm(l) ? db.prepare('SELECT * FROM forms WHERE list_id = ?').get(l.id) ?? null : null);
+const parseJson = (s, fb) => { try { return JSON.parse(s) ?? fb; } catch { return fb; } };
+const formFields = f => (f ? parseJson(f.fields, []) : []);
+
+/** Column headers, in order: [name, value1?, value2?] for normal lists, the form's fields for form lists. */
+const heads = l => (isForm(l) ? formFields(formOf(l)).map(f => f.label) : [l.col1, ...valueCols(l).map(c => c.head)]);
+
+/** One entry's values, in the same order as heads(). */
+function valuesOf(l, r, fields = null) {
+  if (!isForm(l)) return [r.name, ...valueCols(l).map(c => r[c.key] ?? '')];
+  const d = parseJson(r.data, {});
+  return (fields ?? formFields(formOf(l))).map(f => d[f.k] ?? '');
+}
+
+/** Values (same order as heads()) -> the columns to save. `prev` keeps a form entry's answers to fields not shown. */
+function toRow(l, vals, prev = null, fields = null) {
+  if (isForm(l)) {
+    const d = prev ? parseJson(prev.data, {}) : {};
+    (fields ?? formFields(formOf(l))).forEach((f, i) => { if (vals[i]) d[f.k] = vals[i]; else delete d[f.k]; });
+    return { name: vals.find(Boolean) || '—', value1: null, value2: null, data: JSON.stringify(d) };
+  }
+  const row = { name: vals[0], value1: null, value2: null, data: null };
+  valueCols(l).forEach((c, j) => { row[c.key] = vals[1 + j] || null; });
+  return row;
+}
 
 /** Text that is safe inside a ``` code block and fits a column. */
 const cell = (s, n) => truncate(String(s ?? '').replace(/`/g, "'").replace(/\s+/g, ' ').trim(), n);
@@ -48,6 +76,16 @@ function lossbackRows(l, rows, offset) {
   }).join('\n');
 }
 
+/** Form lists: one line per answer, each value in `code` so it is easy to copy, then who sent it and when. */
+function formRows(l, rows, offset, fields) {
+  return rows.map((r, i) => {
+    const vals = valuesOf(l, r, fields).map(v => (v ? `\`${truncate(String(v).replace(/`/g, "'"), 60)}\`` : '—'));
+    const who = r.user_id ? ` · by <@${r.user_id}>` : '';
+    const when = r.created_at ? ` · <t:${Math.floor(r.created_at / 1000)}:R>` : '';
+    return `**${offset + i + 1}.** ${vals.join(' · ')}${who}${when}`;
+  }).join('\n');
+}
+
 /** The public list message: an easy-to-read table plus the staff buttons. */
 function render(listId) {
   const l = getList(listId);
@@ -59,10 +97,21 @@ function render(listId) {
   if (page !== l.page) db.prepare('UPDATE lists SET page = ? WHERE id = ?').run(page, l.id);
   const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, size, page * size);
 
-  const body = rows.length ? (isLB(l) ? lossbackRows(l, rows, page * size) : table(l, rows, page * size)) : '*Nothing here yet.*';
-  const embed = new EmbedBuilder().setColor(COLOR).setTitle(truncate(`📋 ${l.title}`, 256))
-    .setDescription(truncate(`${l.description ? `${l.description}\n\n` : ''}${body}`, 4000))
-    .setFooter({ text: `${total} ${total === 1 ? 'entry' : 'entries'}${pages > 1 ? ` · Page ${page + 1}/${pages}` : ''} · List #${l.id}` })
+  const form = formOf(l), fields = formFields(form);
+  let intro = l.description ? `${l.description}\n\n` : '';
+  if (isForm(l)) {
+    intro = form
+      ? `${form.open ? '🟢 **Form open**' : '🔴 **Form closed**'} · ${form.one_per_user ? 'one entry per member (sending again updates it)' : 'members can send it more than once'}\n`
+        + `Columns: ${fields.map(f => `**${f.label}**`).join(' · ')}\n\n`
+      : '⚠️ The form for this list was deleted.\n\n';
+  }
+  const body = !rows.length ? '*Nothing here yet.*'
+    : isLB(l) ? lossbackRows(l, rows, page * size)
+      : isForm(l) ? formRows(l, rows, page * size, fields)
+        : table(l, rows, page * size);
+  const embed = new EmbedBuilder().setColor(isForm(l) && form && !form.open ? '#E67E22' : COLOR).setTitle(truncate(`📋 ${l.title}`, 256))
+    .setDescription(truncate(`${intro}${body}`, 4000))
+    .setFooter({ text: `${total} ${total === 1 ? 'entry' : 'entries'}${pages > 1 ? ` · Page ${page + 1}/${pages}` : ''} · List #${l.id}${form ? ` · Form #${form.id}` : ''}` })
     .setTimestamp();
 
   const components = [new ActionRowBuilder().addComponents(
@@ -77,14 +126,19 @@ function render(listId) {
     new ButtonBuilder().setCustomId(`ls:paid:${l.id}`).setLabel('Mark paid').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(!total),
     new ButtonBuilder().setCustomId(`ls:dq:${l.id}`).setLabel('Disqualify').setEmoji('🚫').setStyle(ButtonStyle.Danger).setDisabled(!total),
   );
-  second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
+  if (form) second.push(
+    new ButtonBuilder().setCustomId(`fm:edit:${form.id}`).setLabel('Edit form').setEmoji('⚙️').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`fm:toggle:${form.id}`).setLabel(form.open ? 'Close form' : 'Open form').setEmoji(form.open ? '🔒' : '🔓')
+      .setStyle(form.open ? ButtonStyle.Danger : ButtonStyle.Success),
+  );
+  else if (!isForm(l)) second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
   if (pages > 1) {
     second.push(
       new ButtonBuilder().setCustomId(`ls:pg:${l.id}:-1`).setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
       new ButtonBuilder().setCustomId(`ls:pg:${l.id}:1`).setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1),
     );
   }
-  components.push(new ActionRowBuilder().addComponents(second));
+  if (second.length) components.push(new ActionRowBuilder().addComponents(second));
   return { embeds: [embed], components };
 }
 
@@ -118,14 +172,16 @@ const field = (id, label, style, max, required, value, ph) => {
   return new ActionRowBuilder().addComponents(t);
 };
 
-/** Add/edit pop-up: one box for the name plus one per value column the list has. */
-function entryModal(customId, l, e = {}) {
-  const m = new ModalBuilder().setCustomId(customId).setTitle(truncate(e.id ? 'Edit entry' : 'Add entry', 45))
-    .addComponents(field('name', l.col1, TextInputStyle.Short, 100, true, e.name));
-  if (l.col2) m.addComponents(field('value1', l.col2, TextInputStyle.Short, 100, false, e.value1));
-  if (l.col3) m.addComponents(field('value2', l.col3, TextInputStyle.Short, 100, false, e.value2));
+/** Add/edit pop-up: one box per column (c0 = names column, or the form's first field). */
+function entryModal(customId, l, e = null) {
+  const vals = e ? valuesOf(l, e) : [];
+  const m = new ModalBuilder().setCustomId(customId).setTitle(truncate(e ? 'Edit entry' : 'Add entry', 45));
+  heads(l).slice(0, 5).forEach((h, i) => m.addComponents(field(`c${i}`, h, TextInputStyle.Short, 100, !isForm(l) && i === 0, vals[i])));
   return m;
 }
+
+/** The values typed in an add / edit pop-up, in column order. */
+const modalValues = (interaction, l) => heads(l).slice(0, 5).map((_, i) => (interaction.fields.fields.has(`c${i}`) ? clean(interaction.fields.getTextInputValue(`c${i}`), 100) : ''));
 
 /** The select menu used by Edit and Remove: the entries on the page currently shown. */
 function pageRows(l) {
@@ -143,8 +199,9 @@ function entryPicker(l, kind) {
   const menu = new StringSelectMenuBuilder().setCustomId(`lssel:${kind}:${l.id}`)
     .setPlaceholder({ edit: 'Which entry do you want to edit?', rem: 'Pick the entries to remove…', paid: 'Pick entries to toggle paid / unpaid…', dq: 'Which entry do you want to disqualify?' }[kind])
     .addOptions(rows.map(r => {
-      const opt = { label: truncate(`${mark(r)}${page * psize(l) + all.indexOf(r) + 1}. ${r.name}`, 100), value: String(r.id) };
-      const desc = [r.value1, r.value2].filter(Boolean).join(' · ');
+      const [first, ...rest] = valuesOf(l, r);
+      const opt = { label: truncate(`${mark(r)}${page * psize(l) + all.indexOf(r) + 1}. ${first || r.name}`, 100), value: String(r.id) };
+      const desc = rest.filter(Boolean).join(' · ');
       if (desc) opt.description = truncate(desc, 100);
       return opt;
     }));
@@ -220,11 +277,14 @@ async function execute(interaction) {
   if (sub === 'delete') {
     const l = db.prepare('SELECT * FROM lists WHERE id = ? AND guild_id = ?').get(Number(interaction.options.getString('list')), g);
     if (!l) return interaction.reply(eph({ content: '❌ List not found.' }));
+    await interaction.deferReply(eph());
+    const form = formOf(l);
+    if (form) await require('./form').deleteForm(interaction.client, form, false);   // its panels go too; the list is deleted below
     db.prepare('DELETE FROM list_entries WHERE list_id = ?').run(l.id);
     db.prepare('DELETE FROM lists WHERE id = ?').run(l.id);
     try { await (await (await interaction.client.channels.fetch(l.channel_id)).messages.fetch(l.message_id)).delete(); } catch { /* already gone */ }
-    await logToGuild(interaction.client, g, `📋 <@${interaction.user.id}> deleted list **${l.title}** (#${l.id}).`);
-    return interaction.reply(eph({ content: `🗑️ List **${l.title}** deleted.` }));
+    await logToGuild(interaction.client, g, `📋 <@${interaction.user.id}> deleted list **${l.title}** (#${l.id})${form ? ' and its form' : ''}.`);
+    return interaction.editReply({ content: `🗑️ List **${l.title}** deleted${form ? ', with its form and panel buttons' : ''}.` });
   }
 }
 
@@ -248,11 +308,12 @@ const buttons = {
     }
 
     if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only staff can change this list.' }));
+    if (isForm(l) && !formOf(l)) return interaction.reply(eph({ content: '❌ The form for this list was deleted. Delete the list with `/list delete`.' }));
 
     if (action === 'add') return interaction.showModal(entryModal(`lsadd:${l.id}`, l));
 
     if (action === 'bulk') {
-      const cols = [l.col1, l.col2, l.col3].filter(Boolean);
+      const cols = heads(l);
       return interaction.showModal(new ModalBuilder().setCustomId(`lsbulk:${l.id}`).setTitle('Bulk add entries').addComponents(
         field('lines', `One per line: ${cols.join(' | ')}`, TextInputStyle.Paragraph, 4000, true, null,
           `${['Alice', '$25', 'Paid'].slice(0, cols.length).join(' | ')}\n${['Bob', '$10', 'Pending'].slice(0, cols.length).join(' | ')}`)));
@@ -260,17 +321,15 @@ const buttons = {
 
     if (action === 'bedit') {
       const { page, rows } = pageRows(l);
-      const keys = valueCols(l).map(c => c.key);
       const lines = [];
       let len = 0;
       for (const r of rows) {
-        const line = [r.name, ...keys.map(k => r[k] ?? '')].map(x => String(x).replace(/\|/g, '/')).join(' | ');
+        const line = valuesOf(l, r).map(x => String(x).replace(/\|/g, '/')).join(' | ');
         if (len + line.length + 1 > 3900) break;
         lines.push(line); len += line.length + 1;
       }
-      const heads = [l.col1, ...valueCols(l).map(c => c.head)].join(' | ');
       return interaction.showModal(new ModalBuilder().setCustomId(`lsbedit:${l.id}:${page}:${lines.length}`).setTitle(`Bulk edit (page ${page + 1})`).addComponents(
-        field('lines', truncate(`${heads} — keep the line order`, 45), TextInputStyle.Paragraph, 4000, true, lines.join('\n'))));
+        field('lines', truncate(`${heads(l).join(' | ')} — keep the line order`, 45), TextInputStyle.Paragraph, 4000, true, lines.join('\n'))));
     }
 
     if (action === 'edit' || action === 'rem' || action === 'paid' || action === 'dq') {
@@ -286,6 +345,7 @@ const buttons = {
     }
 
     if (action === 'set') {
+      if (isForm(l)) return interaction.reply(eph({ content: 'This list belongs to a form: use its **Edit form** button to change the title and fields.' }));
       return interaction.showModal(new ModalBuilder().setCustomId(`lsset:${l.id}`).setTitle('List settings').addComponents(
         field('title', 'Title', TextInputStyle.Short, 100, true, l.title),
         field('description', 'Text shown above the list (optional)', TextInputStyle.Paragraph, 500, false, l.description),
@@ -355,20 +415,24 @@ const modals = {
     const l = getList(Number(idStr));
     if (!l) return interaction.reply(eph({ content: '❌ This list no longer exists.' }));
     if (countEntries(l.id) >= MAX_ENTRIES) return interaction.reply(eph({ content: `❌ A list can hold up to ${MAX_ENTRIES} entries.` }));
-    const v = id => (interaction.fields.fields.has(id) ? clean(interaction.fields.getTextInputValue(id), 100) : '');
-    db.prepare('INSERT INTO list_entries (list_id, name, value1, value2) VALUES (?, ?, ?, ?)').run(l.id, v('name'), v('value1') || null, v('value2') || null);
-    return applyChange(interaction, l.id, `✅ Added **${v('name')}**.`);
+    const vals = modalValues(interaction, l);
+    if (!vals.some(Boolean)) return interaction.reply(eph({ content: '❌ Fill in at least one box.' }));
+    const r = toRow(l, vals);
+    db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, data) VALUES (?, ?, ?, ?, ?)').run(l.id, r.name, r.value1, r.value2, r.data);
+    return applyChange(interaction, l.id, `✅ Added **${r.name}**.`);
   },
 
   async lsedit(interaction, [idStr, entryId]) {
     if (!requireMod(interaction)) return;
     const l = getList(Number(idStr));
     if (!l) return interaction.reply(eph({ content: '❌ This list no longer exists.' }));
-    const v = id => (interaction.fields.fields.has(id) ? clean(interaction.fields.getTextInputValue(id), 100) : '');
-    const res = db.prepare('UPDATE list_entries SET name = ?, value1 = ?, value2 = ? WHERE id = ? AND list_id = ?')
-      .run(v('name'), v('value1') || null, v('value2') || null, Number(entryId), l.id);
-    if (!res.changes) return interaction.reply(eph({ content: '❌ That entry no longer exists.' }));
-    return applyChange(interaction, l.id, `✅ Updated **${v('name')}**.`);
+    const e = db.prepare('SELECT * FROM list_entries WHERE id = ? AND list_id = ?').get(Number(entryId), l.id);
+    if (!e) return interaction.reply(eph({ content: '❌ That entry no longer exists.' }));
+    const vals = modalValues(interaction, l);
+    if (!vals.some(Boolean)) return interaction.reply(eph({ content: '❌ Fill in at least one box (use **Remove** to delete an entry).' }));
+    const r = toRow(l, vals, e);
+    db.prepare('UPDATE list_entries SET name = ?, value1 = ?, value2 = ?, data = ? WHERE id = ?').run(r.name, r.value1, r.value2, r.data, e.id);
+    return applyChange(interaction, l.id, `✅ Updated **${r.name}**.`);
   },
 
   async lsbulk(interaction, [idStr]) {
@@ -378,10 +442,11 @@ const modals = {
     const room = MAX_ENTRIES - countEntries(l.id);
     const parsed = interaction.fields.getTextInputValue('lines').split('\n')
       .map(line => line.split('|').map(p => clean(p, 100)))
-      .filter(parts => parts[0]);
+      .filter(parts => (isForm(l) ? parts.some(Boolean) : parts[0]));
     const entries = parsed.slice(0, Math.max(0, room));
-    const add = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2) VALUES (?, ?, ?, ?)');
-    db.transaction(() => { for (const [name, v1, v2] of entries) add.run(l.id, name, v1 || null, v2 || null); })();
+    const add = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, data) VALUES (?, ?, ?, ?, ?)');
+    const fields = formFields(formOf(l));
+    db.transaction(() => { for (const parts of entries) { const r = toRow(l, parts, null, fields); add.run(l.id, r.name, r.value1, r.value2, r.data); } })();
     const skipped = parsed.length - entries.length;
     return applyChange(interaction, l.id, `✅ Added ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}${skipped ? ` (${skipped} skipped: the list is full)` : ''}.`);
   },
@@ -393,20 +458,20 @@ const modals = {
     if (!l) return interaction.reply(eph({ content: '❌ This list no longer exists.' }));
     const size = psize(l);
     const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id LIMIT ? OFFSET ?').all(l.id, Number(nStr), Number(pageStr) * size);
-    const keys = valueCols(l).map(c => c.key);
+    const fields = formFields(formOf(l));
+    const width = heads(l).length;
     const lines = interaction.fields.getTextInputValue('lines').split('\n').map(line => line.split('|').map(p => clean(p, 100)));
-    const upd = db.prepare('UPDATE list_entries SET name = ?, value1 = ?, value2 = ? WHERE id = ?');
-    const ins = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2) VALUES (?, ?, ?, ?)');
-    const vals = parts => ({ value1: null, value2: null, ...Object.fromEntries(keys.map((k, j) => [k, parts[1 + j] || null])) });
+    const upd = db.prepare('UPDATE list_entries SET name = ?, value1 = ?, value2 = ?, data = ? WHERE id = ?');
+    const ins = db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, data) VALUES (?, ?, ?, ?, ?)');
+    const same = (a, b) => Array.from({ length: width }, (_, j) => (a[j] || '') === (b[j] || '')).every(Boolean);
     let changed = 0, added = 0, room = MAX_ENTRIES - countEntries(l.id);
     db.transaction(() => {
       lines.forEach((parts, i) => {
-        if (!parts[0]) return;
-        const v = vals(parts);
+        if (isForm(l) ? !parts.some(Boolean) : !parts[0]) return;
         if (i < rows.length) {
-          const r = rows[i];
-          if (r.name !== parts[0] || (r.value1 ?? null) !== v.value1 || (r.value2 ?? null) !== v.value2) { upd.run(parts[0], v.value1, v.value2, r.id); changed++; }
-        } else if (room > 0) { ins.run(l.id, parts[0], v.value1, v.value2); added++; room--; }
+          const old = rows[i];
+          if (!same(valuesOf(l, old, fields), parts)) { const r = toRow(l, parts, old, fields); upd.run(r.name, r.value1, r.value2, r.data, old.id); changed++; }
+        } else if (room > 0) { const r = toRow(l, parts, null, fields); ins.run(l.id, r.name, r.value1, r.value2, r.data); added++; room--; }
       });
     })();
     return applyChange(interaction, l.id, `✅ Bulk edit saved: ${changed} updated, ${added} added.`);
@@ -443,4 +508,4 @@ const modals = {
   },
 };
 
-module.exports = { data, execute, autocomplete, buttons, selects, modals, createList, refreshMessage, getList, render, countEntries };
+module.exports = { data, execute, autocomplete, buttons, selects, modals, createList, refreshMessage, getList, render, countEntries, MAX_ENTRIES };

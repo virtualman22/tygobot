@@ -33,14 +33,14 @@ async function lookup(userId) {
     const j = await bridge().api('POST', { action: 'profile', discord_id: String(userId) }, '', 1500);
     if (!j.ok) return { found: null, p: null };
     if (!j.found) return { found: false, p: null };     // not cached: someone who logs in on the site now can retry right away
-    const p = { stake_username: j.stake_username || '', moon_username: j.moon_username || '', kick_username: j.kick_username || '', eth_address: j.eth_address || '' };
+    const p = { stake_username: j.stake_username || '', kick_username: j.kick_username || '', eth_address: j.eth_address || '' };
     profiles.set(userId, { at: Date.now(), p });
     if (profiles.size > 500) profiles.delete(profiles.keys().next().value);
     return { found: true, p };
   } catch { return { found: null, p: null }; }
 }
 
-/** Stake / Moon username, Kick name and wallet the member linked on the website; null if unknown. */
+/** Stake username, Kick name and wallet the member linked on the website; null if unknown. */
 async function profileOf(userId) { return (await lookup(userId)).p; }
 
 /** Claim forms need a website account (on whenever the site link is on; CLAIMS_REQUIRE_SITE_LOGIN=false turns it off). */

@@ -8,7 +8,7 @@ const claimTypes = Object.entries(CATEGORIES).filter(([, c]) => c.claim);
 
 const data = new SlashCommandBuilder()
   .setName('claimform')
-  .setDescription('Post the claim form buttons (Stake / Moon) in any chat')
+  .setDescription('Post the Stake claim form button in any chat')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
   .addStringOption(o => o.setName('type').setDescription('What kind of claim').setRequired(true)
     .addChoices(...claimTypes.map(([value, c]) => ({ name: c.label, value }))))
@@ -31,7 +31,7 @@ async function execute(interaction) {
     await target.send({
       embeds: [new EmbedBuilder().setColor('#9146FF').setTitle(`${c.emoji} ${c.label}`)
         .setDescription(`${interaction.options.getString('message')
-          ?? `Press **Stake claim** or **Moon claim** (the site your reward is for) and fill in your details. ${c.screenshot ? 'You\'ll also be asked to upload a screenshot. ' : ''}Only staff can see what you submit.`}\n\n💳 ${WALLET_RULE}`)],
+          ?? `Press **Stake claim** and fill in your details. ${c.screenshot ? 'You\'ll also be asked to upload a screenshot. ' : ''}Only staff can see what you submit.`}\n\n💳 ${WALLET_RULE}`)],
       components: [new ActionRowBuilder().addComponents(claimButtons(key))],
     });
   } catch (e) {

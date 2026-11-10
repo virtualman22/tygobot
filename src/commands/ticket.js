@@ -8,21 +8,21 @@ const { SITES, siteOf, siteLabel, siteTag, ETH_ADDRESS, WALLET_RULE, walletNotic
 
 const P = PermissionFlagsBits;
 
-const PICK_SITE = 'Press **Stake** or **Moon** below (the site the reward is for) and fill in';
+const PICK_SITE = 'Press **Stake claim** below and fill in';
 const WALLET_LINE = `\n\n💳 ${WALLET_RULE}`;
 
-// claim: true      -> "Stake" / "Moon" claim form buttons are available
+// claim: true      -> the "Stake claim" form button is available
 // screenshot: true -> member is asked to upload a screenshot
 const CATEGORIES = {
   giveaway: {
     label: 'Giveaway Claim', category: 'Giveaway Claims', emoji: '🎁', style: ButtonStyle.Success, channel: 'giveaway', claim: true,
     whatName: 'What they won', whatLabel: 'What did you win?', whatPh: 'e.g. Weekly giveaway', amountPh: 'e.g. $25 or 0.001 BTC',
-    help: `Congrats on winning! ${PICK_SITE} what you won, the amount, your personal USDT (ETH) wallet and your Stake or Moon username.${WALLET_LINE}`,
+    help: `Congrats on winning! ${PICK_SITE} what you won, the amount, your personal USDT (ETH) wallet and your Stake username.${WALLET_LINE}`,
   },
   milestone: {
     label: 'Milestones', category: 'Milestones', emoji: '🏆', style: ButtonStyle.Primary, channel: 'milestone', claim: true, screenshot: true,
     whatName: 'Milestone', whatLabel: 'Which milestone did you hit?', whatPh: 'e.g. $10,000 wagered', amountPh: 'Reward amount, e.g. $25',
-    help: `${PICK_SITE} the milestone you hit, the reward amount, your personal USDT (ETH) wallet and your Stake or Moon username.\nThen **upload your screenshot in this chat** (or use \`/screenshot\`).${WALLET_LINE}`,
+    help: `${PICK_SITE} the milestone you hit, the reward amount, your personal USDT (ETH) wallet and your Stake username.\nThen **upload your screenshot in this chat** (or use \`/screenshot\`).${WALLET_LINE}`,
   },
   tech: {
     label: 'Technical Assistance', category: 'Technical Assistance', emoji: '🛠️', style: ButtonStyle.Secondary, channel: 'support', claim: false,
@@ -31,11 +31,11 @@ const CATEGORIES = {
   bonus: {
     label: 'Bonuses', category: 'Bonuses', emoji: '💰', style: ButtonStyle.Primary, channel: 'bonus', claim: true,
     whatName: 'Bonus', whatLabel: 'Which bonus is this for?', whatPh: 'e.g. Weekly reload bonus', amountPh: 'e.g. $25 or 0.001 BTC',
-    help: `${PICK_SITE} which bonus it is, the amount, your personal USDT (ETH) wallet and your Stake or Moon username.${WALLET_LINE}`,
+    help: `${PICK_SITE} which bonus it is, the amount, your personal USDT (ETH) wallet and your Stake username.${WALLET_LINE}`,
   },
 };
 
-/** The two claim-form buttons (Stake / Moon) for a category. */
+/** The claim-form button(s), one per site, for a category. */
 const claimButtons = cat => siteButtons(s => `tk:details:${cat}:${s}`, s => `${SITES[s].label} claim`).components;
 const SCREENSHOT_CATEGORIES = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].screenshot);
 
@@ -95,7 +95,7 @@ async function ticketParent(guild, c, s) {
 
 // ---------- claim form ----------
 
-/** The claim form. `stake_user` holds the username on whichever site the claim is for (Stake or Moon). */
+/** The claim form. `stake_user` holds the member's Stake username. */
 function claimModal(cat, claimId, site, v = {}) {
   const c = CATEGORIES[cat];
   const s = SITES[siteOf(site)];
@@ -110,7 +110,7 @@ function claimModal(cat, claimId, site, v = {}) {
     .addComponents(
       f('what', c.whatLabel, c.whatPh, 150),
       f('amount', 'How much?', c.amountPh, 60),
-      f('address', 'Your PERSONAL USDT (ETH) wallet', `0x… your own wallet. NOT a Stake or Moon deposit address`, 60),
+      f('address', 'Your PERSONAL USDT (ETH) wallet', `0x… your own wallet. NOT a Stake deposit address`, 60),
       f('stake_user', `${s.label} username`, `Your exact ${s.label} username`, 80),
     );
 }
@@ -157,7 +157,7 @@ const claimRow = (paid, dq = false) => new ActionRowBuilder().addComponents(
 const claimNotes = (r) =>
   `Site: ${siteLabel(r.site)}\nPersonal USDT ETH wallet: ${r.address}\nDiscord: <@${r.user_id}>\nSubmitted in: <#${r.channel_id}>${r.screenshot ? `\nScreenshot: ${r.screenshot}` : ''}`;
 
-/** Rewards tracker label: one per category AND site, so /rewards keeps Stake and Moon apart. */
+/** Rewards tracker label: one per category AND site. */
 const rewardLabel = (cat, site) => `${CATEGORIES[cat].label} · ${siteLabel(site)}`;
 
 async function refreshCard(client, row) {
@@ -316,7 +316,7 @@ const buttons = {
       return interaction.reply({ content: `🙋 <@${interaction.user.id}> is handling this ticket.`, allowedMentions: { parse: [] } });
     }
 
-    // "Stake claim" / "Moon claim": works in tickets and in any chat where a mod posted /claimform
+    // "Stake claim": works in tickets and in any chat where a mod posted /claimform
     if (action === 'details') {
       const info = ticketInfo(interaction.channel.topic);
       const key = cat || info?.cat;
@@ -327,13 +327,9 @@ const buttons = {
       if (!cardDestination(guild.id)) {
         return interaction.reply(eph({ content: '❌ Staff haven\'t set a claims channel yet. Please ask a mod to run `/setup set claims_channel`.' }));
       }
-      // Buttons posted before Moon existed have no site: ask which one first
-      if (!SITES[site]) {
-        return interaction.reply(eph({ content: `Which site is this **${CATEGORIES[key].label}** for?`, components: [new ActionRowBuilder().addComponents(claimButtons(key))] }));
-      }
       const st = require('../siteTickets');
       const owner = info ? info.userId : interaction.user.id;
-      const acc = await st.lookup(owner);                                                   // Stake / Moon username + wallet linked on the website
+      const acc = await st.lookup(owner);                                                   // Stake username + wallet linked on the website
       if (st.siteLoginRequired() && acc.found !== true) {
         const login = `${require('../bridge').SITE}/login.php`;
         if (acc.found === null) return interaction.reply(eph({ content: '⚠️ I couldn\'t reach the website to check the account. Please try again in a minute.' }));
@@ -342,7 +338,7 @@ const buttons = {
           : `🔒 <@${owner}> hasn't logged in on the website yet (${login}). They need to do that before a claim can be filled in.`, allowedMentions: { parse: [] } }));
       }
       const prof = acc.p;
-      return interaction.showModal(claimModal(key, 0, site, { stake_user: site === 'moon' ? prof?.moon_username : prof?.stake_username, address: prof?.eth_address }));
+      return interaction.showModal(claimModal(key, 0, siteOf(site), { stake_user: prof?.stake_username, address: prof?.eth_address }));
     }
 
     if (action === 'edit') {
