@@ -1,6 +1,6 @@
 const {
   SlashCommandBuilder, PermissionFlagsBits, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, LabelBuilder, AttachmentBuilder,
 } = require('discord.js');
 const { db } = require('../db');
 const { eph, isMod, requireMod, truncate, logToGuild } = require('../utils');
@@ -132,14 +132,61 @@ function render(listId) {
       .setStyle(form.open ? ButtonStyle.Danger : ButtonStyle.Success),
   );
   else if (!isForm(l)) second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
-  if (pages > 1) {
-    second.push(
-      new ButtonBuilder().setCustomId(`ls:pg:${l.id}:-1`).setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
-      new ButtonBuilder().setCustomId(`ls:pg:${l.id}:1`).setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1),
-    );
-  }
   if (second.length) components.push(new ActionRowBuilder().addComponents(second));
+  // Bottom row (anyone): pages and Copy all
+  const nav = [];
+  if (pages > 1) nav.push(
+    new ButtonBuilder().setCustomId(`ls:pg:${l.id}:-1`).setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+    new ButtonBuilder().setCustomId(`ls:pg:${l.id}:1`).setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1),
+  );
+  nav.push(new ButtonBuilder().setCustomId(`ls:copy:${l.id}`).setLabel('Copy all').setEmoji('📄').setStyle(ButtonStyle.Secondary).setDisabled(!total));
+  components.push(new ActionRowBuilder().addComponents(nav));
   return { embeds: [embed], components };
+}
+
+// ---------- Copy all ----------
+
+const COPY_BOX_MAX = 4000;     // a Discord text box holds 4000 characters
+
+/** Every entry as plain text, one per line, columns split by " | " (the same format Bulk add reads). */
+function copyText(l) {
+  const fields = formFields(formOf(l));
+  const flat = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const status = r => (r.dq ? 'disqualified' : r.paid ? 'paid' : 'waiting');
+  return db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id').all(l.id)
+    .map(r => [...valuesOf(l, r, fields).map(flat), ...(isLB(l) ? [status(r)] : [])].join(' | ').replace(/( \| )+$/, ''))
+    .join('\n');
+}
+
+/** Copy all: a pop-up with every entry in a text box (easy to select and copy), or a .txt file when the list is too long for it. */
+async function copyAll(interaction, l) {
+  const text = copyText(l);
+  if (!text) return interaction.reply(eph({ content: 'The list is empty.' }));
+  const cols = [...heads(l), ...(isLB(l) ? ['Status'] : [])].join(' | ');
+  if (text.length <= COPY_BOX_MAX) {
+    const box = new TextInputBuilder().setCustomId('text').setStyle(TextInputStyle.Paragraph).setMaxLength(COPY_BOX_MAX).setRequired(false).setValue(text);
+    return interaction.showModal(new ModalBuilder().setCustomId(`lscopy:${l.id}`).setTitle(truncate(`Copy: ${l.title}`, 45)).addLabelComponents(
+      new LabelBuilder().setLabel(truncate(`${countEntries(l.id)} entries · select all and copy`, 45))
+        .setDescription(truncate(`One per line: ${cols}. Ctrl+A then Ctrl+C on PC.`, 100)).setTextInputComponent(box)));
+  }
+  const name = `${String(l.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'list'}-${l.id}.txt`;
+  return interaction.reply(eph({
+    content: `📄 **${l.title}** is too long for a text box, so here it is as a file (one entry per line: ${cols}).`,
+    files: [new AttachmentBuilder(Buffer.from(text, 'utf8'), { name })],
+  }));
+}
+
+// Lists posted before a new button existed are re-drawn once when the bot starts, so they get it too.
+const LIST_UI_VERSION = 2;     // 2 = Copy all
+try { db.exec('ALTER TABLE lists ADD COLUMN ui_v INTEGER DEFAULT 0'); } catch { /* already migrated */ }
+async function upgradeLists(client) {
+  const rows = db.prepare('SELECT id FROM lists WHERE message_id IS NOT NULL AND COALESCE(ui_v, 0) < ?').all(LIST_UI_VERSION);
+  for (const { id } of rows) {
+    await refreshMessage(client, id);
+    db.prepare('UPDATE lists SET ui_v = ? WHERE id = ?').run(LIST_UI_VERSION, id);
+    await new Promise(r => setTimeout(r, 1500));     // go easy on Discord's rate limits
+  }
+  if (rows.length) console.log(`[list] re-drew ${rows.length} posted lists with the new buttons.`);
 }
 
 /** Re-draws the public message of a list (used when the change came from a pop-up or menu). */
@@ -307,6 +354,9 @@ const buttons = {
       return interaction.update(render(l.id));
     }
 
+    // Copy all is open to everyone too: it only shows what the list already shows
+    if (action === 'copy') return copyAll(interaction, l);
+
     if (!isMod(interaction)) return interaction.reply(eph({ content: '❌ Only staff can change this list.' }));
     if (isForm(l) && !formOf(l)) return interaction.reply(eph({ content: '❌ The form for this list was deleted. Delete the list with `/list delete`.' }));
 
@@ -410,6 +460,9 @@ const selects = {
 // ---------- pop-ups ----------
 
 const modals = {
+  // "Submit" on the Copy all pop-up: nothing to save
+  async lscopy(interaction) { return interaction.deferUpdate().catch(() => interaction.reply(eph({ content: '👍' }))); },
+
   async lsadd(interaction, [idStr]) {
     if (!requireMod(interaction)) return;
     const l = getList(Number(idStr));
@@ -508,4 +561,4 @@ const modals = {
   },
 };
 
-module.exports = { data, execute, autocomplete, buttons, selects, modals, createList, refreshMessage, getList, render, countEntries, MAX_ENTRIES };
+module.exports = { data, execute, autocomplete, buttons, selects, modals, createList, refreshMessage, getList, render, countEntries, MAX_ENTRIES, upgradeLists };

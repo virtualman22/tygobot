@@ -33,5 +33,6 @@ module.exports = {
     require('../scheduler').start(client);
     require('../bridge').start(client);
     require('../commands/ticket').refreshOpenCards(client).catch(e => console.error('Claim card refresh failed:', e.message));
+    require('../commands/list').upgradeLists(client).catch(e => console.error('List upgrade failed:', e.message));
   },
 };
