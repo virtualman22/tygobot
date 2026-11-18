@@ -41,10 +41,8 @@ async function notifyLossback(client, entry, status, reason = '') {
   if (entry.value2) fields.push({ name: 'Loss', value: truncate(entry.value2, 100), inline: true });
   if (list?.title) fields.push({ name: 'Week', value: truncate(list.title, 100), inline: true });
 
-  const w = list?.guild_id ? require('./commands/lossback').lbWindow(list.guild_id) : null;   // (required here: lossback.js loads this file too)
-  const again = !w ? 'You can submit a new lossback form next Friday.'
-    : w.open ? `You can submit a new lossback form until <t:${Math.floor(w.end / 1000)}:F> (<t:${Math.floor(w.end / 1000)}:R>).`
-    : `You can submit a new lossback form when it opens <t:${Math.floor(w.start / 1000)}:F> (<t:${Math.floor(w.start / 1000)}:R>).`;
+  const lb = require('./commands/lossback');                                                     // (required here: lossback.js loads this file too)
+  const again = lb.againLine(list?.guild_id ? lb.lbWindow(list.guild_id) : null);
   const embed = status === 'paid'
     ? new EmbedBuilder().setColor('#2ECC71').setTitle('✅ Your lossback has been paid!')
       .setDescription(`Your lossback from **${guildName}** was sent${entry.value1 ? ` to your wallet \`${shortAddr(entry.value1)}\`` : ''}. Please check your wallet. If it hasn't arrived within a few hours, open a ticket.\n\n${payoutReminder(entry.site)}`)

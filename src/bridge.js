@@ -9,6 +9,7 @@
  *   Site tickets              ->  one thread per ticket (staff-only channel), full chat mirrored, buttons to reply/claim/close
  *   Referral program          ->  staff cards, milestone shout-outs and DMs (src/referrals.js)
  *   Alt detection             ->  account held / hold lifted / new suspected link / staff "Not alts"  ->  alt channel (staff only)
+ *   Lossback form             <-  schedule, open / closed by hand, new list (Ticket desk > Lossbacks); the bot reports what it runs back
  *
  * Needs (Railway variables):  SITE_URL, BRIDGE_SECRET   (same secret as 'bridge_secret' in the site's config.local.php)
  * Optional:                   BRIDGE_POLL_MS (4000), GTB_GUESS_MODE=hidden|close|live (hidden), GTB_CHANNEL_ID, SITE_TICKETS_CHANNEL_ID, ALT_CHANNEL_ID
@@ -304,6 +305,7 @@ async function handle(ev) {
   if (ev.type === 'ticket.dc_open') return require('./siteTickets').onDcOpen(clientRef, ev, api);
   if (ev.type === 'record.cmd') { const k = await require('./siteCmd').handle(clientRef, ev, api); if (k.length) cmdTouched = true; return; }
   if (ev.type.startsWith('ref.')) return require('./referrals').onEvent(clientRef, ev);
+  if (ev.type.startsWith('lossback.')) return require('./commands/lossback').onSiteEvent(clientRef, ev);   // schedule / on-off / new list from the Ticket desk
   if (ev.type.startsWith('alt.')) return onAlt(ev);
   if (ev.type.startsWith('gtb.')) return onGtb(ev);
   if (ev.type.startsWith('ticket.')) return onTicket(ev);

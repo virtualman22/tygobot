@@ -7,7 +7,11 @@ const { eph, requireMod, truncate, logToGuild, ts } = require('../utils');
 const { createList, refreshMessage, getList } = require('./list');
 const { SITES, siteOf, siteLabel, ETH_ADDRESS, WALLET_RULE, walletNotice, BAD_ADDRESS, siteButtons } = require('../sites');
 
-// ---------- when the form is open: every Friday, opens–closes in the lossback timezone (default 08:00–20:00 UTC+1) ----------
+// ---------- when the form is open ----------
+// Set on the website (Ticket desk > Lossbacks, sent as "lossback.config" events) or with /lossback config:
+//   days (default Friday), opens–closes as HH:MM in the lossback timezone (default 08:00–20:00 UTC+1),
+//   mode: auto = follow the schedule · open = open now until staff switch back · closed = closed whatever the schedule says.
+// The bot reports what it runs back to the site (reportToSite), so the Ticket desk always shows the real state.
 // Times are shown with Discord timestamps (<t:…>), so everyone sees them in their own timezone.
 
 const DEFAULT_TZ = 'Etc/GMT-1';                      // fixed UTC+1 (IANA writes the sign the other way round)
@@ -26,6 +30,11 @@ function normTz(raw) {
 /** Etc/GMT-1 -> "UTC+1" for display. */
 const tzLabel = tz => { const m = /^Etc\/GMT([+-])(\d+)$/.exec(tz); return m ? `UTC${m[1] === '-' ? '+' : '-'}${m[2]}` : tz; };
 const hh = h => `${String(h).padStart(2, '0')}:00`;
+/** minutes since midnight <-> "HH:MM" */
+const hm = min => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const parseHM = v => { const m = /^(\d{1,2}):([0-5]\d)$/.exec(String(v ?? '').trim()); if (!m) return null; const t = Number(m[1]) * 60 + Number(m[2]); return t <= 1440 ? t : null; };
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 /** How far tz is ahead of UTC at time t, in ms. */
 function tzOffset(tz, t) {
@@ -33,34 +42,62 @@ function tzOffset(tz, t) {
     .formatToParts(new Date(t)).map(x => [x.type, Number(x.value)]));
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000;
 }
-/** Wall-clock time (year, month 0-11, day, hour) in tz -> timestamp. */
-function zoned(tz, y, mo, d, h) {
-  const guess = Date.UTC(y, mo, d, h);
+/** Wall-clock time (year, month 0-11, day, minutes since midnight) in tz -> timestamp. */
+function zoned(tz, y, mo, d, min) {
+  const guess = Date.UTC(y, mo, d, 0, min);
   return guess - tzOffset(tz, guess - tzOffset(tz, guess));
 }
 
-/** The current form window, or the next one: { open, start, end, tz, opens, closes } (ms). */
-function lbWindow(guildId, now = Date.now()) {
+/** The schedule as set: { tz, days: [0-6], openMin, closeMin, mode }. */
+function lbConfig(guildId) {
   const s = getSettings(guildId);
-  const tz = s.lossback_tz || DEFAULT_TZ;
-  const opens = s.lossback_open_hour ?? DEFAULT_OPEN, closes = s.lossback_close_hour ?? DEFAULT_CLOSE;
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric' })
-    .formatToParts(new Date(now)).map(x => [x.type, Number(x.value)]));
-  for (let d = 0; d <= 8; d++) {
-    const day = new Date(Date.UTC(p.year, p.month - 1, p.day + d));
-    if (day.getUTCDay() !== 5) continue;                                   // Friday
-    const start = zoned(tz, day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), opens);
-    const end = zoned(tz, day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), closes);
-    if (now < end) return { open: now >= start, start, end, tz, opens, closes };
-  }
+  const openMin = parseHM(s.lossback_open_at) ?? (s.lossback_open_hour ?? DEFAULT_OPEN) * 60;
+  const closeMin = parseHM(s.lossback_close_at) ?? (s.lossback_close_hour ?? DEFAULT_CLOSE) * 60;
+  const days = [...new Set(String(s.lossback_days ?? '5').split(',').map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))];
+  return { tz: s.lossback_tz || DEFAULT_TZ, days: days.length ? days : [5], openMin, closeMin: closeMin > openMin ? closeMin : openMin + 60,
+           mode: ['open', 'closed'].includes(s.lossback_mode) ? s.lossback_mode : 'auto' };
 }
 
-const scheduleText = w => `every **Friday ${hh(w.opens)}–${hh(w.closes)} ${tzLabel(w.tz)}**`;
+/**
+ * The current form window, or the next one: { open, manual, start, end, next, tz, days, openMin, closeMin, mode } (ms).
+ * manual = staff switched it open / closed by hand: start / end are null then, "next" is still the next scheduled window.
+ */
+function lbWindow(guildId, now = Date.now()) {
+  const c = lbConfig(guildId);
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: c.tz, year: 'numeric', month: 'numeric', day: 'numeric' })
+    .formatToParts(new Date(now)).map(x => [x.type, Number(x.value)]));
+  let next = null;
+  for (let d = -1; d <= 8 && !next; d++) {
+    const day = new Date(Date.UTC(p.year, p.month - 1, p.day + d));
+    if (!c.days.includes(day.getUTCDay())) continue;
+    const start = zoned(c.tz, day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), c.openMin);
+    const end = zoned(c.tz, day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), c.closeMin);
+    if (now < end) next = { start, end };
+  }
+  if (c.mode === 'open') return { ...c, open: true, manual: true, start: null, end: null, next };
+  if (c.mode === 'closed') return { ...c, open: false, manual: true, start: null, end: null, next };
+  return { ...c, open: now >= next.start, manual: false, start: next.start, end: next.end, next };
+}
+
+const daysText = days => {
+  const d = [...days].sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(x => DAY_NAMES[x]);
+  return d.length === 7 ? 'every day' : `every ${d.length > 1 ? d.slice(0, -1).join(', ') + ' and ' + d.at(-1) : d[0]}`;
+};
+const scheduleText = w => `**${daysText(w.days)} ${hm(w.openMin)}–${hm(w.closeMin)} ${tzLabel(w.tz)}**`;
 /** One line for the panel / replies: open until …, or next opens … */
-const windowLine = w => (w.open
-  ? `🟢 **Open now** · closes ${ts(w.end, 'F')} (${ts(w.end, 'R')})`
-  : `🔴 **Closed** · next opens ${ts(w.start, 'F')} (${ts(w.start, 'R')}) and closes ${ts(w.end, 't')}`);
-const closedMessage = w => `⏳ Lossback forms are closed right now. They are open ${scheduleText(w)}.\nNext form: opens ${ts(w.start, 'F')} (${ts(w.start, 'R')}) and closes ${ts(w.end, 't')}.`;
+const windowLine = w => (w.manual
+  ? (w.open ? '🟢 **Open now** · until staff close it' : '🔴 **Closed** · staff will open it again')
+  : w.open
+    ? `🟢 **Open now** · closes ${ts(w.end, 'F')} (${ts(w.end, 'R')})`
+    : `🔴 **Closed** · next opens ${ts(w.start, 'F')} (${ts(w.start, 'R')}) and closes ${ts(w.end, 't')}`);
+const closedMessage = w => (w.manual
+  ? '⏳ Lossback forms are closed right now. Staff will open them again, keep an eye on the announcements.'
+  : `⏳ Lossback forms are closed right now. They are open ${scheduleText(w)}.\nNext form: opens ${ts(w.start, 'F')} (${ts(w.start, 'R')}) and closes ${ts(w.end, 't')}.`);
+/** "You can submit a new lossback form …" for the DMs (lossbackNotify.js). */
+const againLine = w => (!w ? 'You can submit a new lossback form when the next one opens.'
+  : w.manual ? (w.open ? 'You can submit a new lossback form now.' : 'You can submit a new lossback form when staff open it again.')
+  : w.open ? `You can submit a new lossback form until ${ts(w.end, 'F')} (${ts(w.end, 'R')}).`
+  : `You can submit a new lossback form when it opens ${ts(w.start, 'F')} (${ts(w.start, 'R')}).`);
 
 /** The list that new submissions go to, or null if none is set up (or it was deleted). */
 function activeList(guildId) {
@@ -72,15 +109,20 @@ function activeList(guildId) {
 const dateLabel = tz => new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: tz }).format(new Date());
 
 async function spawnList(interaction, target, title) {
-  const tz = lbWindow(interaction.guildId).tz;
+  return createLossbackList(interaction.client, interaction.guildId, target, title, interaction.user.id);
+}
+/** A fresh, empty staff list; new submissions go to it. how = ' from the website' etc. for the log. */
+async function createLossbackList(client, guildId, target, title, userId, how = '') {
+  const tz = lbWindow(guildId).tz;
   const id = await createList(target, {
-    guildId: interaction.guildId, userId: interaction.user.id, kind: 'lossback',
+    guildId, userId, kind: 'lossback',
     title: title || `Lossback — ${dateLabel(tz)}`,
     description: 'All addresses are members\' **personal USDT (ETH)** wallets. ✅ = paid · ⬜ = waiting. Staff add the loss amount.',
     col1: 'Username', col2: 'USDT ETH Address', col3: 'Loss',
   });
-  updateSettings(interaction.guildId, { lossback_list_id: id });
-  await logToGuild(interaction.client, interaction.guildId, `💸 <@${interaction.user.id}> started lossback list #${id} in ${target}. New submissions go there now.`);
+  updateSettings(guildId, { lossback_list_id: id });
+  await logToGuild(client, guildId, `💸 ${userId ? `<@${userId}>` : 'Staff'} started lossback list #${id} in ${target}${how}. New submissions go there now.`);
+  reportToSite(client, guildId).catch(() => {});
   return id;
 }
 
@@ -124,9 +166,10 @@ function panelPayload(guildId, custom) {
 
 // Posted panels are remembered so the bot can switch them between "Open now" and "Closed" by itself (refreshPanels, every 30 s from the scheduler)
 db.exec('CREATE TABLE IF NOT EXISTS lossback_panels (message_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, guild_id TEXT NOT NULL, custom TEXT, state TEXT)');
-const stateOf = w => `${w.open ? 'open' : 'closed'}:${w.start}:${w.end}`;
+const stateOf = w => `${w.open ? 'open' : 'closed'}:${w.manual ? 'manual' : `${w.start}:${w.end}`}:${w.days.join('')}:${w.openMin}-${w.closeMin}:${w.tz}`;
 
 async function refreshPanels(client, guildId = null, force = false) {
+  reportIfChanged(client).catch(() => {});
   const rows = db.prepare(`SELECT * FROM lossback_panels${guildId ? ' WHERE guild_id = ?' : ''}`).all(...(guildId ? [guildId] : []));
   for (const p of rows) {
     const state = stateOf(lbWindow(p.guild_id));
@@ -159,20 +202,21 @@ async function execute(interaction) {
     const closes = interaction.options.getInteger('closes');
     const tz = tzRaw == null ? null : normTz(tzRaw);
     if (tzRaw != null && !tz) return interaction.reply(eph({ content: '❌ Unknown timezone. Use `UTC+1`, `UTC`, or an IANA name like `Europe/Amsterdam`, `Europe/London` or `America/New_York`.' }));
-    const cur = getSettings(g);
-    const o = opens ?? cur.lossback_open_hour ?? DEFAULT_OPEN, c = closes ?? cur.lossback_close_hour ?? DEFAULT_CLOSE;
-    if (o >= c) return interaction.reply(eph({ content: `❌ The form must open before it closes (you'd get ${hh(o)}–${hh(c)}).` }));
+    const cur = lbConfig(g);
+    const o = opens != null ? opens * 60 : cur.openMin, c = closes != null ? closes * 60 : cur.closeMin;
+    if (o >= c) return interaction.reply(eph({ content: `❌ The form must open before it closes (you'd get ${hm(o)}–${hm(c)}).` }));
     const summary = () => {
       const s = getSettings(g), w = lbWindow(g);
-      return `Stake code: **${s.lossback_code || 'not set'}**\nOpen ${scheduleText(w)}\n${windowLine(w)}`;
+      return `Stake code: **${s.lossback_code || 'not set'}**\nSchedule: ${scheduleText(w)}${w.manual ? ` (switched ${w.open ? 'open' : 'closed'} by hand on the website)` : ''}\n${windowLine(w)}\nDays, times and the on/off switch can also be set on the website: Ticket desk > Lossbacks.`;
     };
     if (code == null && tz == null && opens == null && closes == null) return interaction.reply(eph({ content: summary() }));
     updateSettings(g, {
       ...(code != null && { lossback_code: code.trim() || null }), ...(tz != null && { lossback_tz: tz }),
-      ...(opens != null && { lossback_open_hour: opens }), ...(closes != null && { lossback_close_hour: closes }),
+      ...(opens != null && { lossback_open_hour: opens, lossback_open_at: hm(opens * 60) }), ...(closes != null && { lossback_close_hour: closes, lossback_close_at: hm(closes * 60) }),
     });
     await interaction.deferReply(eph());
     await refreshPanels(interaction.client, g, true);
+    reportToSite(interaction.client, g).catch(() => {});
     return interaction.editReply({ content: `✅ Saved. Panels posted with \`/lossback panel\` update by themselves.\n${summary()}` });
   }
 
@@ -228,7 +272,7 @@ const buttons = {
     };
     const name = SITES[site].label;
     return interaction.showModal(new ModalBuilder().setCustomId(`lbform:${site}`).setTitle(`${name} lossback`)
-      .addTextDisplayComponents(new TextDisplayBuilder().setContent(`⏰ This form closes ${ts(w.end, 'F')} (${ts(w.end, 'R')}).`), walletNotice())
+      .addTextDisplayComponents(new TextDisplayBuilder().setContent(w.end ? `⏰ This form closes ${ts(w.end, 'F')} (${ts(w.end, 'R')}).` : '⏰ This form is open until staff close it.'), walletNotice())
       .addComponents(
         input('username', code ? `${name} username under code ${code}` : `Your ${name} username`, `Your exact ${name} username`, 80, prof?.stake_username),
         input('address', 'Your PERSONAL USDT (ETH) wallet', '0x… your own wallet. NOT a Stake deposit address', 60, prof?.eth_address),
@@ -255,8 +299,88 @@ const modals = {
     db.prepare('INSERT INTO list_entries (list_id, name, value1, value2, user_id, site) VALUES (?, ?, ?, NULL, ?, ?)').run(l.id, username, address, interaction.user.id, site);
     await refreshMessage(interaction.client, l.id);
     await logToGuild(interaction.client, g, `💸 <@${interaction.user.id}> submitted a **${siteLabel(site)}** lossback as **${username}** (list #${l.id}).`);
-    return interaction.reply(eph({ content: `✅ Your **${siteLabel(site)}** lossback was submitted ${ts(Date.now(), 'F')}. Staff will add your loss amount and pay you.\nThis week's form closes ${ts(closesAt, 'F')} (${ts(closesAt, 'R')}).` }));
+    reportToSite(interaction.client, g).catch(() => {});
+    return interaction.reply(eph({ content: `✅ Your **${siteLabel(site)}** lossback was submitted ${ts(Date.now(), 'F')}. Staff will add your loss amount and pay you.${closesAt ? `\nThis form closes ${ts(closesAt, 'F')} (${ts(closesAt, 'R')}).` : ''}` }));
   },
 };
 
-module.exports = { data, execute, buttons, modals, lbWindow, windowLine, refreshPanels };
+// ---------- the website: settings from the Ticket desk, and what the bot runs reported back ----------
+
+const guildOf = client => process.env.GUILD_ID || client.guilds.cache.first()?.id || null;
+const sec = ms => (ms ? Math.floor(ms / 1000) : null);
+let lastReport = { at: 0, sig: '' };
+
+/** Tells the site what the form runs right now: schedule, open / closed, the list submissions go to. extra.error = a problem to show there. */
+async function reportToSite(client, guildId = null, extra = {}) {
+  const bridge = require('../bridge');
+  if (!bridge.enabled()) return;
+  const g = guildId || guildOf(client);
+  if (!g) return;
+  const s = getSettings(g), w = lbWindow(g), l = activeList(g);
+  let list = null;
+  if (l) {
+    const n = db.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0 THEN 1 ELSE 0 END) AS w FROM list_entries WHERE list_id = ?').get(l.id);
+    const ch = client.channels.cache.get(l.channel_id) ?? await client.channels.fetch(l.channel_id).catch(() => null);
+    list = { id: l.id, title: l.title, channel: ch?.name || '', entries: n.n || 0, waiting: n.w || 0, created_at: sec(l.created_at) };
+  }
+  const panels = db.prepare('SELECT COUNT(*) AS n FROM lossback_panels WHERE guild_id = ?').get(g).n;
+  const body = {
+    action: 'lossback_state', rev: s.lossback_rev || 0, panels, list,
+    settings: { days: w.days, open: hm(w.openMin), close: hm(w.closeMin), tz: w.tz, code: s.lossback_code || '', mode: w.mode },
+    window: { open: w.open, manual: w.manual, start: sec(w.start), end: sec(w.end) }, ...extra,
+  };
+  const j = await bridge.api('POST', body);
+  if (!j.ok) throw new Error(j.error || 'the site refused the lossback report');
+  lastReport = { at: Date.now(), sig: stateOf(w) + `:${s.lossback_rev || 0}:${list?.id}:${list?.entries}:${list?.waiting}` };
+}
+/** From the scheduler (every 30 s, via refreshPanels): report when something changed, and at least every 5 minutes. */
+async function reportIfChanged(client) {
+  const g = guildOf(client);
+  if (!g || !require('../bridge').enabled()) return;
+  const s = getSettings(g), w = lbWindow(g), l = activeList(g);
+  const n = l ? db.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN COALESCE(paid, 0) = 0 AND COALESCE(dq, 0) = 0 THEN 1 ELSE 0 END) AS w FROM list_entries WHERE list_id = ?').get(l.id) : null;
+  const sig = stateOf(w) + `:${s.lossback_rev || 0}:${l?.id}:${n?.n || 0}:${n?.w || 0}`;
+  if (sig === lastReport.sig && Date.now() - lastReport.at < 300_000) return;
+  await reportToSite(client, g);
+}
+
+/** Bridge events from the website: lossback.config (schedule / code / mode) and lossback.newlist. */
+async function onSiteEvent(client, ev) {
+  const d = ev.data || {};
+  const g = guildOf(client);
+  if (!g) throw new Error('the bot is not in a server yet');
+  const who = d.by ? `<@${d.by}>` : (d.by_name || 'Staff');
+
+  if (ev.type === 'lossback.config') {
+    const days = [...new Set((Array.isArray(d.days) ? d.days : []).map(Number).filter(x => Number.isInteger(x) && x >= 0 && x <= 6))];
+    const o = parseHM(d.open), c = parseHM(d.close), tz = normTz(String(d.tz || ''));
+    const mode = ['auto', 'open', 'closed'].includes(d.mode) ? d.mode : 'auto';
+    if (!days.length || o == null || c == null || o >= c || o >= 1440 || !tz) {
+      updateSettings(g, { lossback_rev: Number(d.rev) || 0 });
+      return reportToSite(client, g, { error: 'The bot could not use the last change from the website (invalid days, times or timezone). Nothing was changed.' });
+    }
+    const before = lbWindow(g);
+    updateSettings(g, { lossback_days: days.join(','), lossback_open_at: hm(o), lossback_close_at: hm(c), lossback_tz: tz,
+      lossback_code: String(d.code ?? '').trim() || null, lossback_mode: mode, lossback_rev: Number(d.rev) || 0 });
+    const w = lbWindow(g);
+    const what = before.mode !== w.mode
+      ? (w.mode === 'open' ? 'opened the lossback form by hand' : w.mode === 'closed' ? 'closed the lossback form by hand' : 'put the lossback form back on its schedule')
+      : 'changed the lossback schedule';
+    await logToGuild(client, g, `🗓️ ${who} ${what} on the website. Schedule: ${scheduleText(w)}. ${windowLine(w)}`);
+    await refreshPanels(client, g, true);
+    return reportToSite(client, g);
+  }
+
+  if (ev.type === 'lossback.newlist') {
+    db.exec('CREATE TABLE IF NOT EXISTS bot_flags (key TEXT PRIMARY KEY, at INTEGER)');
+    const flag = `lbnew:${ev.seq}`;
+    if (db.prepare('SELECT 1 FROM bot_flags WHERE key = ?').get(flag)) return;      // already done (event replayed after a restart)
+    const cur = activeList(g);
+    const target = cur && await client.channels.fetch(cur.channel_id).catch(() => null);
+    if (!target) return reportToSite(client, g, { error: cur ? 'Could not start a new list: the current list\'s channel is gone. Use /lossback newlist in Discord.' : 'No lossback list yet: post the panel with /lossback panel in Discord first.' });
+    await createLossbackList(client, g, target, String(d.title || '').trim() || null, d.by || null, ' from the website');
+    db.prepare('INSERT OR REPLACE INTO bot_flags (key, at) VALUES (?, ?)').run(flag, Date.now());
+  }
+}
+
+module.exports = { data, execute, buttons, modals, lbWindow, windowLine, againLine, refreshPanels, reportToSite, onSiteEvent };

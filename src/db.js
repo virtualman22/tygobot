@@ -216,6 +216,13 @@ for (const sql of ["ALTER TABLE claims ADD COLUMN site TEXT DEFAULT 'stake'", "A
   try { db.exec(sql); } catch { /* already migrated */ }
 }
 
+// Lossback schedule set on the website (Ticket desk > Lossbacks): any days of the week, HH:MM times, and a manual on/off.
+// lossback_days "5" or "5,6" (0 = Sunday) · lossback_open_at / lossback_close_at "08:00" / "20:00" (win over the old *_hour columns)
+// lossback_mode auto | open | closed · lossback_rev = the last website save applied (reported back so the site knows it arrived)
+for (const col of ['lossback_days TEXT', 'lossback_open_at TEXT', 'lossback_close_at TEXT', 'lossback_mode TEXT', 'lossback_rev INTEGER']) {
+  try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch { /* already migrated */ }
+}
+
 // Forms (/form): a public button + pop-up whose answers fill a list of kind 'form'.
 // fields = JSON [{ k, label, required }]; each answer is saved in list_entries.data as JSON { k: value }.
 try { db.exec('ALTER TABLE list_entries ADD COLUMN data TEXT'); } catch { /* already migrated */ }
@@ -249,6 +256,7 @@ const SETTING_COLUMNS = [
   'qotd_channel', 'qotd_hour', 'last_qotd', 'trivia_channel', 'trivia_hour', 'last_trivia',
   'suggest_channel', 'starboard_channel', 'starboard_threshold', 'ticket_category',
   'xp_enabled', 'automod_links', 'lossback_list_id', 'lossback_tz', 'lossback_code', 'lossback_open_hour', 'lossback_close_hour',
+  'lossback_days', 'lossback_open_at', 'lossback_close_at', 'lossback_mode', 'lossback_rev',
   'referral_channel', 'referral_staff_channel', 'alt_channel',
 ];
 
