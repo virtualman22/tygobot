@@ -111,6 +111,7 @@ const PAGES = {
         '➕ **Add** — one entry · 📥 **Bulk add** — paste many, one per line like `Alice | $25 | Paid`\n' +
         '✏️ **Edit** — pick an entry and change it · 🗑️ **Remove** — pick one or more entries to delete\n' +
         '⚙️ **Settings** — change the title, text and column headers (leave a value header empty to hide that column)\n' +
+        '🎯 **Community hunt** — turns the list into a community hunt: *Username | Amount | Source*. 🧮 **Calculate** asks for the starting balance (empty = everything put in) and the ending balance; the list then shows the multiplier and what everyone gets back. Also `/list create community_hunt:True`\n' +
         '◀ ▶ — pages, for long lists · 📄 **Copy all** — every entry in a text box, one per line, ready to copy (a .txt file for very long lists). Anyone can use these',
     }),
   },

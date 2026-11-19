@@ -10,9 +10,87 @@ const { notifyLossback, forget } = require('../lossbackNotify');
 const PAGE_SIZE = 20;      // entries per page (lossback and form lists use 15: one line per entry, not a table)
 const isLB = l => l.kind === 'lossback';
 const isForm = l => l.kind === 'form';
+const isHunt = l => l.kind === 'hunt';
 const psize = l => (isLB(l) || isForm(l) ? 15 : PAGE_SIZE);
 const MAX_ENTRIES = 500;   // per list
 const COLOR = '#9146FF';
+
+// ---------- community hunt ----------
+// A normal list switched to "Community hunt" (button on the list, or /list create community_hunt:true): the columns become
+// Username | Amount | Source. Staff press Calculate and enter the starting balance (default: everything put in) and the ending
+// balance; the multiplier is end / start and everyone gets back what they put in times it. It recalculates itself when entries change.
+// lists.hunt = JSON { start: number|null (null = total put in), end: number|null, prev: [col1, col2, col3] (headers before the switch) }
+try { db.exec('ALTER TABLE lists ADD COLUMN hunt TEXT'); } catch { /* already migrated */ }
+const HUNT_COLS = ['Username', 'Amount', 'Source'];
+
+/** "$1,250.50", "1250", "€25,5", "25 usd" -> number, or null when there is no number in it. */
+function parseAmount(v) {
+  let s = String(v ?? '').replace(/[^\d.,-]/g, '');
+  if (!/\d/.test(s)) return null;
+  if (s.includes(',') && !s.includes('.') && /,\d{1,2}$/.test(s)) s = s.replace(',', '.');   // 25,50 = decimal comma
+  s = s.replace(/,/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+/** The currency sign people typed (first one found in the amounts), default $. */
+const currencyOf = rows => (rows.map(r => /[$€£]/.exec(r.value1 ?? '')?.[0]).find(Boolean)) || '$';
+const fmtMoney = (n, cur = '$') => `${n < 0 ? '-' : ''}${cur}${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
+const huntOf = l => (isHunt(l) ? { start: null, end: null, prev: null, ...(parseJson(l.hunt, {}) || {}) } : null);
+
+/** Everything the hunt shows: the total put in, start / end, the multiplier and each entry's return (null until calculated). */
+function huntMath(l, rows = null) {
+  const h = huntOf(l);
+  const all = rows ?? db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id').all(l.id);
+  const total = Math.round(all.reduce((a, r) => a + (parseAmount(r.value1) ?? 0), 0) * 100) / 100;
+  const start = h.start ?? total;
+  const mult = h.end != null && start > 0 ? h.end / start : null;
+  const back = r => { const a = parseAmount(r.value1); return mult === null || a === null ? null : Math.round(a * mult * 100) / 100; };
+  return { h, total, start, end: h.end, mult, back, cur: currencyOf(all), startIsTotal: h.start == null };
+}
+const multText = m => `x${m >= 100 ? Math.round(m) : m >= 10 ? m.toFixed(1) : m.toFixed(2)}`;
+
+/** The summary above a hunt list. */
+function huntIntro(l) {
+  const m = huntMath(l);
+  const lines = [`🎯 **Community hunt** · ${countEntries(l.id)} ${countEntries(l.id) === 1 ? 'person' : 'people'} put in **${fmtMoney(m.total, m.cur)}**`];
+  if (m.mult === null) lines.push(`Starting balance **${fmtMoney(m.start, m.cur)}**${m.startIsTotal ? ' (everything put in)' : ''} · ending balance *not in yet*: staff press **Calculate**`);
+  else {
+    const up = m.end >= m.start;
+    lines.push(`Start **${fmtMoney(m.start, m.cur)}** → End **${fmtMoney(m.end, m.cur)}** · ${up ? '📈' : '📉'} **${multText(m.mult)}**`);
+    lines.push(`Every ${fmtMoney(1, m.cur)} put in comes back as **${fmtMoney(Math.round(m.mult * 100) / 100, m.cur)}**.`);
+  }
+  return lines.join('\n') + '\n\n';
+}
+
+/** Hunt table: # · Username · Source · In · Back (Back once calculated). */
+function huntTable(l, rows, offset) {
+  const m = huntMath(l);
+  const cols = [
+    { head: '#', get: (_, i) => String(offset + i + 1), max: 4, right: true },
+    { head: 'Username', get: r => r.name, max: 20 },
+    { head: 'Source', get: r => r.value2 ?? '', max: 12 },
+    { head: 'In', get: r => { const a = parseAmount(r.value1); return a === null ? (r.value1 ? `${r.value1}?` : '') : fmtMoney(a, m.cur); }, max: 12, right: true },
+    ...(m.mult !== null ? [{ head: 'Back', get: r => { const b = m.back(r); return b === null ? '' : fmtMoney(b, m.cur); }, max: 12, right: true }] : []),
+  ];
+  const widths = cols.map(c => Math.min(c.max, Math.max(cell(c.head, c.max).length, ...rows.map((r, i) => cell(c.get(r, i), c.max).length))));
+  const pad = (txt, w, right) => (right ? txt.padStart(w) : txt.padEnd(w));
+  const line = vals => vals.map((v, i) => pad(cell(v, cols[i].max), widths[i], cols[i].right)).join('  ').trimEnd();
+  const out = [line(cols.map(c => c.head)), widths.map(w => '─'.repeat(w)).join('──')];
+  rows.forEach((r, i) => out.push(line(cols.map(c => c.get(r, i)))));
+  return '```\n' + out.join('\n') + '\n```';
+}
+
+/** Turns a normal list into a community hunt (or back). Returns the new kind. */
+function toggleHunt(l) {
+  if (isHunt(l)) {
+    const prev = huntOf(l).prev || [l.col1, l.col2, l.col3];
+    db.prepare('UPDATE lists SET kind = NULL, col1 = ?, col2 = ?, col3 = ? WHERE id = ?').run(prev[0] || 'Name', prev[1] || null, prev[2] || null, l.id);
+    return null;
+  }
+  const h = { ...(parseJson(l.hunt, {}) || {}), prev: [l.col1, l.col2, l.col3] };
+  db.prepare("UPDATE lists SET kind = 'hunt', col1 = ?, col2 = ?, col3 = ?, hunt = ? WHERE id = ?").run(...HUNT_COLS, JSON.stringify(h), l.id);
+  return 'hunt';
+}
 
 // ---------- helpers ----------
 
@@ -25,7 +103,7 @@ const valueCols = l => [l.col2 && { key: 'value1', head: l.col2 }, l.col3 && { k
 
 // Form lists (/form) have up to 5 columns: the form's fields. Answers live in list_entries.data as { fieldKey: value }.
 const formOf = l => (isForm(l) ? db.prepare('SELECT * FROM forms WHERE list_id = ?').get(l.id) ?? null : null);
-const parseJson = (s, fb) => { try { return JSON.parse(s) ?? fb; } catch { return fb; } };
+function parseJson(s, fb) { try { return JSON.parse(s) ?? fb; } catch { return fb; } }
 const formFields = f => (f ? parseJson(f.fields, []) : []);
 
 /** Column headers, in order: [name, value1?, value2?] for normal lists, the form's fields for form lists. */
@@ -99,6 +177,7 @@ function render(listId) {
 
   const form = formOf(l), fields = formFields(form);
   let intro = l.description ? `${l.description}\n\n` : '';
+  if (isHunt(l)) intro += huntIntro(l);
   if (isForm(l)) {
     intro = form
       ? `${form.open ? '🟢 **Form open**' : '🔴 **Form closed**'} · ${form.one_per_user ? 'one entry per member (sending again updates it)' : 'members can send it more than once'}\n`
@@ -108,7 +187,8 @@ function render(listId) {
   const body = !rows.length ? '*Nothing here yet.*'
     : isLB(l) ? lossbackRows(l, rows, page * size)
       : isForm(l) ? formRows(l, rows, page * size, fields)
-        : table(l, rows, page * size);
+        : isHunt(l) ? huntTable(l, rows, page * size)
+          : table(l, rows, page * size);
   const embed = new EmbedBuilder().setColor(isForm(l) && form && !form.open ? '#E67E22' : COLOR).setTitle(truncate(`📋 ${l.title}`, 256))
     .setDescription(truncate(`${intro}${body}`, 4000))
     .setFooter({ text: `${total} ${total === 1 ? 'entry' : 'entries'}${pages > 1 ? ` · Page ${page + 1}/${pages}` : ''} · List #${l.id}${form ? ` · Form #${form.id}` : ''}` })
@@ -131,7 +211,12 @@ function render(listId) {
     new ButtonBuilder().setCustomId(`fm:toggle:${form.id}`).setLabel(form.open ? 'Close form' : 'Open form').setEmoji(form.open ? '🔒' : '🔓')
       .setStyle(form.open ? ButtonStyle.Danger : ButtonStyle.Success),
   );
-  else if (!isForm(l)) second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
+  else if (!isForm(l)) {
+    if (isHunt(l)) second.push(new ButtonBuilder().setCustomId(`ls:calc:${l.id}`).setLabel('Calculate').setEmoji('🧮').setStyle(ButtonStyle.Success).setDisabled(!total));
+    second.push(new ButtonBuilder().setCustomId(`ls:set:${l.id}`).setLabel('Settings').setEmoji('⚙️').setStyle(ButtonStyle.Secondary));
+    if (!isLB(l)) second.push(new ButtonBuilder().setCustomId(`ls:hunt:${l.id}`).setLabel(isHunt(l) ? 'Community hunt: on' : 'Community hunt')
+      .setEmoji('🎯').setStyle(isHunt(l) ? ButtonStyle.Primary : ButtonStyle.Secondary));
+  }
   if (second.length) components.push(new ActionRowBuilder().addComponents(second));
   // Bottom row (anyone): pages and Copy all
   const nav = [];
@@ -153,8 +238,11 @@ function copyText(l) {
   const fields = formFields(formOf(l));
   const flat = v => String(v ?? '').replace(/\s+/g, ' ').trim();
   const status = r => (r.dq ? 'disqualified' : r.paid ? 'paid' : 'waiting');
-  return db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id').all(l.id)
-    .map(r => [...valuesOf(l, r, fields).map(flat), ...(isLB(l) ? [status(r)] : [])].join(' | ').replace(/( \| )+$/, ''))
+  const rows = db.prepare('SELECT * FROM list_entries WHERE list_id = ? ORDER BY id').all(l.id);
+  const m = isHunt(l) ? huntMath(l, rows) : null;
+  const back = r => { const b = m && m.back(r); return b == null ? [] : [fmtMoney(b, m.cur)]; };
+  return rows
+    .map(r => [...valuesOf(l, r, fields).map(flat), ...(isLB(l) ? [status(r)] : []), ...back(r)].join(' | ').replace(/( \| )+$/, ''))
     .join('\n');
 }
 
@@ -162,7 +250,7 @@ function copyText(l) {
 async function copyAll(interaction, l) {
   const text = copyText(l);
   if (!text) return interaction.reply(eph({ content: 'The list is empty.' }));
-  const cols = [...heads(l), ...(isLB(l) ? ['Status'] : [])].join(' | ');
+  const cols = [...heads(l), ...(isLB(l) ? ['Status'] : []), ...(isHunt(l) && huntMath(l).mult !== null ? ['Back'] : [])].join(' | ');
   if (text.length <= COPY_BOX_MAX) {
     const box = new TextInputBuilder().setCustomId('text').setStyle(TextInputStyle.Paragraph).setMaxLength(COPY_BOX_MAX).setRequired(false).setValue(text);
     return interaction.showModal(new ModalBuilder().setCustomId(`lscopy:${l.id}`).setTitle(truncate(`Copy: ${l.title}`, 45)).addLabelComponents(
@@ -177,7 +265,7 @@ async function copyAll(interaction, l) {
 }
 
 // Lists posted before a new button existed are re-drawn once when the bot starts, so they get it too.
-const LIST_UI_VERSION = 2;     // 2 = Copy all
+const LIST_UI_VERSION = 3;     // 2 = Copy all · 3 = Community hunt button
 try { db.exec('ALTER TABLE lists ADD COLUMN ui_v INTEGER DEFAULT 0'); } catch { /* already migrated */ }
 async function upgradeLists(client) {
   const rows = db.prepare('SELECT id FROM lists WHERE message_id IS NOT NULL AND COALESCE(ui_v, 0) < ?').all(LIST_UI_VERSION);
@@ -284,6 +372,7 @@ const data = new SlashCommandBuilder()
     .addStringOption(o => o.setName('value2').setDescription('Header of the second value column (e.g. Status). Leave out for none').setMaxLength(30))
     .addStringOption(o => o.setName('name_header').setDescription('Header of the names column (default: Name)').setMaxLength(30))
     .addStringOption(o => o.setName('description').setDescription('Text shown above the list').setMaxLength(500))
+    .addBooleanOption(o => o.setName('community_hunt').setDescription('Community hunt: Username | Amount | Source, and a Calculate button for everyone\'s return'))
     .addChannelOption(o => o.setName('channel').setDescription('Where to post it (default: this channel)')
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread)))
   .addSubcommand(s => s.setName('all').setDescription('Show every list in this server with a link to it'))
@@ -297,20 +386,24 @@ async function execute(interaction) {
 
   if (sub === 'create') {
     const target = interaction.options.getChannel('channel') ?? interaction.channel;
+    const hunt = interaction.options.getBoolean('community_hunt') === true;
     let id;
     try {
       id = await createList(target, {
         guildId: g, userId: interaction.user.id, title: interaction.options.getString('title'),
         description: interaction.options.getString('description')?.trim() || null,
-        col1: clean(interaction.options.getString('name_header'), 30) || 'Name',
-        col2: clean(interaction.options.getString('value1'), 30) || null,
-        col3: clean(interaction.options.getString('value2'), 30) || null,
+        col1: hunt ? HUNT_COLS[0] : clean(interaction.options.getString('name_header'), 30) || 'Name',
+        col2: hunt ? HUNT_COLS[1] : clean(interaction.options.getString('value1'), 30) || null,
+        col3: hunt ? HUNT_COLS[2] : clean(interaction.options.getString('value2'), 30) || null,
+        kind: hunt ? 'hunt' : null,
       });
     } catch (e) {
       return interaction.reply(eph({ content: `❌ Couldn't post the list there: ${e.message}` }));
     }
     await logToGuild(interaction.client, g, `📋 <@${interaction.user.id}> created list **${clean(interaction.options.getString('title'), 100)}** (#${id}) in ${target}.`);
-    return interaction.reply(eph({ content: `✅ List posted in ${target}. Use its **Add** button to fill it, or **Settings** to rename it and change the columns.` }));
+    return interaction.reply(eph({ content: hunt
+      ? `✅ Community hunt posted in ${target}. **Add** or **Bulk add** people (\`Username | Amount | Source\`), then press **Calculate** with the starting and ending balance.`
+      : `✅ List posted in ${target}. Use its **Add** button to fill it, or **Settings** to rename it and change the columns.` }));
   }
 
   if (sub === 'all') {
@@ -362,6 +455,23 @@ const buttons = {
 
     if (action === 'add') return interaction.showModal(entryModal(`lsadd:${l.id}`, l));
 
+    if (action === 'hunt') {
+      if (isLB(l) || isForm(l)) return interaction.reply(eph({ content: 'Lossback and form lists can\'t be a community hunt.' }));
+      const on = toggleHunt(l) === 'hunt';
+      await logToGuild(interaction.client, interaction.guildId, `🎯 <@${interaction.user.id}> switched community hunt ${on ? 'on' : 'off'} for list **${l.title}** (#${l.id}).`);
+      return interaction.update(render(l.id));
+    }
+
+    if (action === 'calc') {
+      if (!isHunt(l)) return interaction.reply(eph({ content: 'Switch **Community hunt** on first.' }));
+      const m = huntMath(l);
+      const amt = n => (n == null ? null : String(Math.round(n * 100) / 100));
+      return interaction.showModal(new ModalBuilder().setCustomId(`lscalc:${l.id}`).setTitle('Calculate the community hunt').addComponents(
+        field('start', truncate(`Starting balance (everyone put in ${fmtMoney(m.total, m.cur)})`, 45), TextInputStyle.Short, 20, false, amt(m.startIsTotal ? null : m.start), `Empty = ${amt(m.total)} (the total put in)`),
+        field('end', 'Ending balance', TextInputStyle.Short, 20, true, amt(m.end), 'What the hunt ended with, e.g. 1840.50'),
+      ));
+    }
+
     if (action === 'bulk') {
       const cols = heads(l);
       return interaction.showModal(new ModalBuilder().setCustomId(`lsbulk:${l.id}`).setTitle('Bulk add entries').addComponents(
@@ -396,6 +506,10 @@ const buttons = {
 
     if (action === 'set') {
       if (isForm(l)) return interaction.reply(eph({ content: 'This list belongs to a form: use its **Edit form** button to change the title and fields.' }));
+      if (isHunt(l)) return interaction.showModal(new ModalBuilder().setCustomId(`lsset:${l.id}`).setTitle('Community hunt settings').addComponents(
+        field('title', 'Title', TextInputStyle.Short, 100, true, l.title),
+        field('description', 'Text shown above the list (optional)', TextInputStyle.Paragraph, 500, false, l.description),
+      ));
       return interaction.showModal(new ModalBuilder().setCustomId(`lsset:${l.id}`).setTitle('List settings').addComponents(
         field('title', 'Title', TextInputStyle.Short, 100, true, l.title),
         field('description', 'Text shown above the list (optional)', TextInputStyle.Paragraph, 500, false, l.description),
@@ -550,11 +664,31 @@ const modals = {
     }
   },
 
+  async lscalc(interaction, [idStr]) {
+    if (!requireMod(interaction)) return;
+    const l = getList(Number(idStr));
+    if (!l || !isHunt(l)) return interaction.reply(eph({ content: '❌ This community hunt no longer exists.' }));
+    const rawStart = interaction.fields.getTextInputValue('start').trim(), rawEnd = interaction.fields.getTextInputValue('end').trim();
+    const start = rawStart === '' ? null : parseAmount(rawStart), end = parseAmount(rawEnd);
+    if (rawStart !== '' && (start === null || start <= 0)) return interaction.reply(eph({ content: '❌ The starting balance must be a number above 0 (or leave it empty to use the total put in).' }));
+    if (end === null || end < 0) return interaction.reply(eph({ content: '❌ The ending balance must be a number (0 or more).' }));
+    const h = { ...huntOf(l), start, end };
+    db.prepare('UPDATE lists SET hunt = ? WHERE id = ?').run(JSON.stringify(h), l.id);
+    const m = huntMath(getList(l.id));
+    if (!(m.start > 0)) return interaction.reply(eph({ content: '❌ Nobody has an amount yet, so there is nothing to divide. Add the amounts, or enter a starting balance.' }));
+    await logToGuild(interaction.client, interaction.guildId, `🧮 <@${interaction.user.id}> calculated community hunt **${l.title}**: ${fmtMoney(m.start, m.cur)} → ${fmtMoney(m.end, m.cur)} (${multText(m.mult)}).`);
+    return applyChange(interaction, l.id, `✅ Calculated: ${fmtMoney(m.start, m.cur)} → ${fmtMoney(m.end, m.cur)} · **${multText(m.mult)}**. Everyone's return is on the list.`);
+  },
+
   async lsset(interaction, [idStr]) {
     if (!requireMod(interaction)) return;
     const l = getList(Number(idStr));
     if (!l) return interaction.reply(eph({ content: '❌ This list no longer exists.' }));
     const t = id => interaction.fields.getTextInputValue(id).trim();
+    if (isHunt(l)) {                                                    // the hunt's columns stay Username | Amount | Source
+      db.prepare('UPDATE lists SET title = ?, description = ? WHERE id = ?').run(clean(t('title'), 100), t('description') || null, l.id);
+      return applyChange(interaction, l.id, '✅ Community hunt settings saved.');
+    }
     db.prepare('UPDATE lists SET title = ?, description = ?, col1 = ?, col2 = ?, col3 = ? WHERE id = ?')
       .run(clean(t('title'), 100), t('description') || null, clean(t('col1'), 30) || 'Name', clean(t('col2'), 30) || null, clean(t('col2'), 30) ? clean(t('col3'), 30) || null : null, l.id);
     return applyChange(interaction, l.id, '✅ List settings saved.');
