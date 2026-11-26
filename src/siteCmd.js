@@ -6,6 +6,10 @@
  *   dq       disqualify                                        (claims: card + member told; rewards: Cancelled; lossbacks: 🚫 and the member can submit again)
  *   delete   remove it from the bot (claim row + rewards entry + card message, or the lossback list entry)
  *   edit     amount / category / source / note
+ *   details  the same fields staff can change in Discord: claim form (what, amount, wallet, Stake username),
+ *            rewards tracker (label, username, reward, notes), lossback list entry (name, wallet, loss)
+ *   unpay    back to waiting (rewards tracker + lossback lists only, as in Discord: a paid claim card stays paid)
+ *   undq     undo a disqualification / cancellation (rewards tracker + lossback lists only)
  *   add      register one by hand for a member (claim + card, lossback list entry, or a rewards-tracker entry)
  *
  * Afterwards the record is sent back to the site straight away (siteSync), which clears the "syncing" mark there.
@@ -136,6 +140,94 @@ async function edit(client, p, d) {
   setMeta(`${p.type}:${p.id}`, { origin, note: clean(d.note, 200) });
 }
 
+/** Detail fields, exactly the ones Discord lets staff change. Only the fields sent are touched. */
+async function details(client, p, d, by) {
+  const f = d.fields && typeof d.fields === 'object' ? d.fields : {};
+  const has = k => Object.prototype.hasOwnProperty.call(f, k);
+  const { ETH_ADDRESS } = require('./sites');
+  if (p.type === 'claim') {
+    const { refreshCard, claimNotes } = require('./commands/ticket');
+    const c = db.prepare('SELECT * FROM claims WHERE id = ?').get(p.id);
+    if (!c) throw new Error('That claim no longer exists in the bot.');
+    if (c.paid) throw new Error('That claim is already paid in Discord, so its details are locked.');
+    if (c.disqualified) throw new Error('That claim was disqualified in Discord, so its details are locked.');
+    const n = {
+      what: has('what') ? clean(f.what, 150) : c.what, amount: has('amount_text') ? clean(f.amount_text, 60) : c.amount,
+      address: has('address') ? clean(f.address, 120) : c.address, stake_user: has('user') ? clean(f.user, 80) : c.stake_user,
+    };
+    if (!n.what || !n.amount || !n.stake_user) throw new Error('What, amount and username can not be empty.');
+    if (!ETH_ADDRESS.test(n.address)) throw new Error('That is not a valid USDT (ETH) wallet (0x + 40 characters).');
+    db.prepare('UPDATE claims SET what = ?, amount = ?, address = ?, stake_user = ? WHERE id = ?').run(n.what, n.amount, n.address, n.stake_user, c.id);
+    const fresh = db.prepare('SELECT * FROM claims WHERE id = ?').get(c.id);
+    if (c.reward_id) db.prepare('UPDATE rewards SET username = ?, reward = ?, notes = ?, updated_at = ? WHERE id = ?')
+      .run(n.stake_user, `${n.what} (${n.amount})`.slice(0, 200), claimNotes(fresh), Date.now(), c.reward_id);
+    await refreshCard(client, fresh);
+    await logToGuild(client, c.guild_id, `✏️ <@${by}> edited ${n.stake_user}'s claim details (from the website).`);
+  } else if (p.type === 'reward') {
+    const r = db.prepare('SELECT * FROM rewards WHERE id = ?').get(p.id);
+    if (!r) throw new Error('That rewards entry no longer exists in the bot.');
+    const n = {
+      label: has('what') ? clean(f.what, 100) : r.label, username: has('user') ? clean(f.user, 100) : r.username,
+      reward: has('amount_text') ? clean(f.amount_text, 200) : r.reward,
+      notes: has('note') ? (String(f.note ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, 1000) || null) : r.notes,
+    };
+    if (!n.label || !n.username || !n.reward) throw new Error('Label, username and reward can not be empty.');
+    db.prepare('UPDATE rewards SET label = ?, username = ?, reward = ?, notes = ?, updated_at = ? WHERE id = ?').run(n.label, n.username, n.reward, n.notes, Date.now(), r.id);
+    await logToGuild(client, r.guild_id, `✏️ <@${by}> edited reward #${r.id} (from the website).`);
+  } else {
+    const e = db.prepare('SELECT * FROM list_entries WHERE id = ?').get(p.id);
+    if (!e) throw new Error('That lossback entry no longer exists in the bot.');
+    const n = {
+      name: has('user') ? clean(f.user, 100) : e.name, value1: has('address') ? (clean(f.address, 120) || null) : e.value1,
+      value2: has('amount_text') ? (clean(f.amount_text, 100) || null) : e.value2,
+    };
+    if (!n.name) throw new Error('The name can not be empty.');
+    if (n.value1 && n.value1 !== e.value1 && !ETH_ADDRESS.test(n.value1)) throw new Error('That is not a valid USDT (ETH) wallet (0x + 40 characters).');
+    db.prepare('UPDATE list_entries SET name = ?, value1 = ?, value2 = ? WHERE id = ?').run(n.name, n.value1, n.value2, e.id);
+    await logToGuild(client, gid(client), `✏️ <@${by}> edited lossback entry **${n.name}** (from the website).`);
+    await require('./commands/list').refreshMessage(client, e.list_id);
+  }
+}
+
+/** Paid -> waiting again. Discord only allows this on the rewards tracker and lossback lists (claim cards lock once paid). */
+async function unpay(client, p, by) {
+  if (p.type === 'claim') throw new Error('A paid claim card can not be set back to waiting (it is locked in Discord too).');
+  if (p.type === 'reward') {
+    const r = db.prepare('SELECT * FROM rewards WHERE id = ?').get(p.id);
+    if (!r) throw new Error('That rewards entry no longer exists in the bot.');
+    if (r.status !== 'Paid') return;
+    db.prepare("UPDATE rewards SET status = 'Pending', updated_at = ? WHERE id = ?").run(Date.now(), r.id);
+    await logToGuild(client, r.guild_id, `⏳ <@${by}> set reward #${r.id} back to **Pending** (from the website).`);
+  } else {
+    const e = db.prepare('SELECT * FROM list_entries WHERE id = ?').get(p.id);
+    if (!e) throw new Error('That lossback entry no longer exists in the bot.');
+    if (!e.paid) return;
+    db.prepare('UPDATE list_entries SET paid = 0 WHERE id = ?').run(e.id);
+    await logToGuild(client, gid(client), `⬜ <@${by}> marked lossback **${e.name}** as unpaid (from the website).`);
+    await require('./commands/list').refreshMessage(client, e.list_id);
+  }
+}
+
+/** Undo a disqualification (lossback) / cancellation (rewards tracker). A disqualified claim card stays locked, as in Discord. */
+async function undq(client, p, by) {
+  if (p.type === 'claim') throw new Error('A disqualified claim card can not be undone (it is locked in Discord too). The member can submit a new claim.');
+  if (p.type === 'reward') {
+    const r = db.prepare('SELECT * FROM rewards WHERE id = ?').get(p.id);
+    if (!r) throw new Error('That rewards entry no longer exists in the bot.');
+    if (r.status !== 'Cancelled') return;
+    db.prepare("UPDATE rewards SET status = 'Pending', updated_at = ? WHERE id = ?").run(Date.now(), r.id);
+    await logToGuild(client, r.guild_id, `⏳ <@${by}> set reward #${r.id} back to **Pending** (from the website).`);
+  } else {
+    const e = db.prepare('SELECT * FROM list_entries WHERE id = ?').get(p.id);
+    if (!e) throw new Error('That lossback entry no longer exists in the bot.');
+    if (!e.dq) return;
+    db.prepare('UPDATE list_entries SET dq = 0, dq_reason = NULL WHERE id = ?').run(e.id);
+    require('./lossbackNotify').forget(e.id, 'dq');
+    await logToGuild(client, gid(client), `↩️ <@${by}> removed the disqualification of lossback **${e.name}** (from the website).`);
+    await require('./commands/list').refreshMessage(client, e.list_id);
+  }
+}
+
 async function add(client, d, by) {
   const g = gid(client);
   if (!g) throw new Error('The bot is not in a server yet.');
@@ -198,6 +290,9 @@ async function handle(client, ev, api) {
       else if (d.op === 'dq') await dq(client, p, by, clean(d.reason, 200));
       else if (d.op === 'delete') await del(client, p, by);
       else if (d.op === 'edit') await edit(client, p, d);
+      else if (d.op === 'details') await details(client, p, d, by);
+      else if (d.op === 'unpay') await unpay(client, p, by);
+      else if (d.op === 'undq') await undq(client, p, by);
     }
     db.prepare('DELETE FROM site_sync WHERE key = ?').run(key);       // forces the record to be re-sent even if nothing visible changed
     return [key];
